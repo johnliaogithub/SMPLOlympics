@@ -26,7 +26,7 @@
 
 ## Intallation 
 
-1. Create new conda environment and install pytroch:
+1. Create new conda environment and install pytorch:
 
 ```
 conda create -n isaac python=3.8
@@ -39,10 +39,13 @@ pip install numpy cython wheel "setuptools<58.0.0"   # Install the dependencies 
 pip install -r requirement.txt
 ```
 
-2. Install [isaacgym](https://docs.nvidia.com/isaac/isaacgym/doc/setup.html)
+2. Install [isaacgym](https://docs.nvidia.com/isaac/isaacgym/doc/setup.html). Since Isaac Gym is deprecated, you will need to install from this site: [New Isaac Gym URL](https://developer.nvidia.com/isaac-gym/download)
 
-NOTE: Since Isaac Gym is deprecated, you will need to install from this site: 
-[New Isaac Gym URL](https://developer.nvidia.com/isaac-gym/download)
+```
+tar -xvzf [link to .tar.gz file] # unzip Isaac Gym file
+cd isaacgym/python
+pip install -e .
+```
 
 3. Download SMPL paramters from [SMPL](https://smpl.is.tue.mpg.de/) and [SMPLX](https://smpl-x.is.tue.mpg.de/download.php). Put them in the `data/smpl` folder, unzip them into 'data/smpl' folder. For SMPL, please download the v1.1.0 version, which contains the neutral humanoid. Rename the files `basicmodel_neutral_lbs_10_207_0_v1.1.0`, `basicmodel_m_lbs_10_207_0_v1.1.0.pkl`, `basicmodel_f_lbs_10_207_0_v1.1.0.pkl` to `SMPL_NEUTRAL.pkl`, `SMPL_MALE.pkl` and `SMPL_FEMALE.pkl`. For SMPLX, please download the v1.1 version. Rename The file structure should look like this:
 
