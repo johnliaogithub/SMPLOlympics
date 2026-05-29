@@ -294,7 +294,7 @@ class Humanoid(BaseTask):
 
         self.allocate_buffers()
 
-        if self.viewer != None or flags.server_mode:
+        if self.viewer != None or flags.server_mode or self.recording:
             self._init_camera()
 
     def allocate_buffers(self):
@@ -753,8 +753,11 @@ class Humanoid(BaseTask):
             
             if not smpl_robot is None:
                 asset_id = uuid4()
-                asset_file_real = f"/tmp/smpl/smpl_humanoid_{asset_id}.xml"
+                asset_file_real = f"/tmp/j73liao/smpl_humanoid_{asset_id}.xml"
+                #asset_file_real = f"/tmp/smpl/smpl_humanoid_{asset_id}.xml"
                 smpl_robot.load_from_skeleton(betas=torch.from_numpy(gender_beta[None, 1:]), gender=gender_beta[0:1], objs_info=None)
+
+                print(f"ATTEMPTING TO WRITE XML TO: {asset_file_real}")
                 smpl_robot.write_xml(asset_file_real)
             else:
                 asset_file_real = f"phc/data/assets/mjcf/smpl_{int(gender_beta[0])}_humanoid.xml"
@@ -1455,7 +1458,7 @@ class Humanoid(BaseTask):
         return
 
     def render(self, sync_frame_time=False):
-        if self.viewer or flags.server_mode:
+        if self.viewer or flags.server_mode or (self.headless and self.recording):
             self._update_camera()
 
         super().render(sync_frame_time)

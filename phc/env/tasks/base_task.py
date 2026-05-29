@@ -78,7 +78,7 @@ class BaseTask():
 
         # double check!
         self.graphics_device_id = self.device_id
-        if enable_camera_sensors == False and self.headless == True:
+        if enable_camera_sensors == False and not cfg.get("record_video", False) and self.headless == True:
             self.graphics_device_id = -1
         # if flags.server_mode:
         # self.graphics_device_id = self.device_id
@@ -184,6 +184,10 @@ class BaseTask():
 
         self.recorder_camera_handle = self.recorder_camera_handles[0]
         self.recording, self.recording_state_change = False, False
+        if self.cfg.get("record_video", False):
+            import atexit
+            self.recording = True
+            atexit.register(self._close_writer)
         self.max_video_queue_size = 100000
         self._video_queue = deque(maxlen=self.max_video_queue_size)
         rendering_out = osp.join("output", "renderings")
@@ -460,27 +464,33 @@ class BaseTask():
             else:
                 self.gym.poll_viewer_events(self.viewer)
                 
-        # else:
-        #     if flags.server_mode:
-        #         # headless server model only support rendering from one env
-        #         self.gym.fetch_results(self.sim, True)
-        #         self.gym.step_graphics(self.sim)
-        #         self.gym.render_all_camera_sensors(self.sim)
-        #         self.gym.start_access_image_tensors(self.sim)
+        # Headless recording via camera sensors when +record_video=True
+        if self.headless and self.recording and not flags.server_mode:
+            if self.device != 'cpu':
+                self.gym.fetch_results(self.sim, True)
+            self.gym.step_graphics(self.sim)
+            self.gym.render_all_camera_sensors(self.sim)
+            color_image = self.gym.get_camera_image(
+                self.sim, self.envs[self.viewing_env_idx],
+                self.recorder_camera_handles[self.viewing_env_idx],
+                gymapi.IMAGE_COLOR,
+            )
+            self.color_image = color_image.reshape(color_image.shape[0], -1, 4)
+            if "writer" not in self.__dict__:
+                curr_date_time = datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
+                self.curr_video_file_name = self._video_path % curr_date_time
+                self.curr_states_file_name = self._states_path % curr_date_time
+                self.writer = imageio.get_writer(self.curr_video_file_name, fps=60, macro_block_size=None)
+                print(f"============ Recording to {self.curr_video_file_name} ============")
+            self.writer.append_data(self.color_image[..., :3])
+            self._record_states()
 
-        #         # self.gym.get_viewer_camera_handle(self.viewer)
-        #         color_image = self.gym.get_camera_image(self.sim, self.envs[self.viewing_env_idx], self.recorder_camera_handles[self.viewing_env_idx], gymapi.IMAGE_COLOR)
+    def _close_writer(self):
+        if "writer" in self.__dict__:
+            self.writer.close()
+            print(f"============ Video saved to {self.curr_video_file_name} ============")
+            del self.writer
 
-        #         self.color_image = color_image.reshape(color_image.shape[0], -1, 4)[..., :3]
-
-        #         if self.recording:
-        #             self._video_queue.append(self.color_image)
-        #             self._record_states()
-                    
-            
-                
-                
-                
     def get_actor_params_info(self, dr_params, env):
         """Returns a flat array of actor params, their names and ranges."""
         if "actor_params" not in dr_params:

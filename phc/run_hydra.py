@@ -52,6 +52,8 @@ from phc.utils.flags import flags
 import numpy as np
 import copy
 import torch
+import torch.multiprocessing
+torch.multiprocessing.set_sharing_strategy('file_system')
 import wandb
 
 from learning import im_amp
@@ -329,7 +331,7 @@ def main(cfg_hydra: DictConfig) -> None:
         )
         wandb.config.update(cfg, allow_val_change=True)
         wandb.run.name = cfg.exp_name
-        wandb.run.save()
+        # wandb.run.save()
     
     set_seed(cfg.get("seed", -1), cfg.get("torch_deterministic", False))
 
