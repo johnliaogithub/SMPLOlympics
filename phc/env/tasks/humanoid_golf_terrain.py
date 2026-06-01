@@ -1,6 +1,6 @@
 import torch
-import env.tasks.humanoid_amp_task as humanoid_amp_task
-from utils import torch_utils
+import phc.env.tasks.humanoid_amp_task as humanoid_amp_task
+from phc.utils import torch_utils
 import torch.nn.functional as F
 import math
 import pdb

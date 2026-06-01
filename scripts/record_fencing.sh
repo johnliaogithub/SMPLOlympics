@@ -16,6 +16,6 @@ python phc/run_hydra.py \
     learning.params.config.switch_frequency=250 \
     test=True \
     +record_video=True \
-    +checkpoint=output/HumanoidIm/fencing_pulse/Humanoid.pth \
+    +checkpoint=output/HumanoidIm/fencing_baseline/Humanoid.pth \
     learning.params.config.player.games_num=5
 

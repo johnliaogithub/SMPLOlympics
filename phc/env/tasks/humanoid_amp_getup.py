@@ -26,12 +26,12 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import torch
-
 from isaacgym import gymapi
 from isaacgym import gymtorch
 
-from env.util import gym_util
+import torch
+
+from phc.env.util import gym_util
 from phc.env.tasks.humanoid_amp import HumanoidAMP
 from isaacgym.torch_utils import *
 

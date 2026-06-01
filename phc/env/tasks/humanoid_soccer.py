@@ -1,9 +1,9 @@
 import torch
 
-import env.tasks.humanoid as humanoid
-import env.tasks.humanoid_amp as humanoid_amp
-import env.tasks.humanoid_amp_task as humanoid_amp_task
-from utils import torch_utils
+import phc.env.tasks.humanoid as humanoid
+import phc.env.tasks.humanoid_amp as humanoid_amp
+import phc.env.tasks.humanoid_amp_task as humanoid_amp_task
+from phc.utils import torch_utils
 
 from isaacgym import gymapi
 from isaacgym import gymtorch

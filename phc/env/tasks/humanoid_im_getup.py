@@ -35,7 +35,7 @@ from phc.env.util import gym_util
 from phc.env.tasks.humanoid_im import HumanoidIm
 from isaacgym.torch_utils import *
 
-from utils import torch_utils
+from phc.utils import torch_utils
 from phc.utils.flags import flags
 
 
