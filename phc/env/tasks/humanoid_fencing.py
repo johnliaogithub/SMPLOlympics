@@ -62,19 +62,30 @@ class HumanoidFencing(humanoid_amp_task.HumanoidAMPTask):
         ########## building for boxing area ##########
         self.bounding_box = torch.tensor([-1, 1, -7, 7,]).to(self.device) # x_min, x_max, y_min, y_max
         self.bounding_box_points = torch.tensor([[[-1, -7, 0], [1, 7, 0]]]).repeat(self.num_envs, 1, 1).to(self.device)
-        self.reward_weights = {
-            'reward_f': 0.1,
-            'reward_v': 0.1,
-            'reward_s': 0.2,
-            'reward_t': 1,
-            'reward_h': 0.6
-        }
-
-        
-
         self.env_ids_all = torch.arange(self.num_envs).to(self.device)
-        self.warmup_time = int(250/self.dt) # 10 minutes wall time
+        self.warmup_time = int(250/self.dt)
         self.step_counter = 0
+
+        # --- Curriculum ---
+        # Load from the named registry in phc/utils/curriculum_configs.py.
+        # Pass env.curriculum_config=<version> to select a version (default: v2).
+        # Stage thresholds can be overridden per-run via env.curriculum_stage1_steps / stage2_steps.
+        config_name = cfg["env"].get("curriculum_config", "v2")
+        from phc.utils.curriculum_configs import CONFIGS as _CURRICULUM_REGISTRY
+        if config_name not in _CURRICULUM_REGISTRY:
+            raise ValueError(f"Unknown curriculum_config '{config_name}'. Available: {list(_CURRICULUM_REGISTRY.keys())}")
+        _cfg = _CURRICULUM_REGISTRY[config_name]
+        print(f"\n[Curriculum] Config '{config_name}': {_cfg['description']}")
+        import copy
+        default_stages = copy.deepcopy(_cfg["stages"])
+        # Allow per-run threshold overrides without editing the registry
+        if "curriculum_stage1_steps" in cfg["env"]:
+            default_stages[1]["step_threshold"] = cfg["env"]["curriculum_stage1_steps"]
+        if "curriculum_stage2_steps" in cfg["env"] and len(default_stages) > 2:
+            default_stages[2]["step_threshold"] = cfg["env"]["curriculum_stage2_steps"]
+        self.curriculum_stages = default_stages
+        self.curriculum_stage = 0
+        self.reward_weights = self.curriculum_stages[0]["reward_weights"].copy()
 
     def sample_position_on_field(self, n):
         inside_x, inside_y = 1, 1 # 1m inside the bounding box
@@ -88,7 +99,33 @@ class HumanoidFencing(humanoid_amp_task.HumanoidAMPTask):
             obs_size = 154
         return obs_size
 
+    def _update_curriculum(self):
+        new_stage = 0
+        for i, stage in enumerate(self.curriculum_stages):
+            if self.step_counter >= stage["step_threshold"]:
+                new_stage = i
+        if new_stage != self.curriculum_stage:
+            self.curriculum_stage = new_stage
+            stage_cfg = self.curriculum_stages[self.curriculum_stage]
+            self.reward_weights = stage_cfg["reward_weights"].copy()
+            epoch_est = self.step_counter // 32
+            msg = f"[Curriculum] Stage {self.curriculum_stage}: {stage_cfg['label']} (step {self.step_counter}, epoch ~{epoch_est})"
+            print(f"\n{msg}")
+            try:
+                import wandb
+                if wandb.run is not None:
+                    wandb.log({"curriculum/stage": self.curriculum_stage, "curriculum/step": self.step_counter}, step=epoch_est)
+            except Exception:
+                pass
+            try:
+                with open("curriculum_transitions.log", "a") as f:
+                    import datetime
+                    f.write(f"{datetime.datetime.now().isoformat()}  {msg}\n")
+            except Exception:
+                pass
+
     def post_physics_step(self):
+        self._update_curriculum()
         self.out_bound, self.red_win, self.green_win = self.check_game_state()
         self.step_counter += 1
         super().post_physics_step()
@@ -280,11 +317,63 @@ class HumanoidFencing(humanoid_amp_task.HumanoidAMPTask):
             sword_hit_state = torch.cat([self.sword_hit_list[i], self.sword_hit_list[1-i]], dim = -1)
             
             reward, reward_raw = compute_fencing_reward(root_state, prev_root_state, body_pos, self_fallen, opponent_fallen,
-                                                        contact_force_norm, opponent_contact_force_norm[:,0], 
+                                                        contact_force_norm, opponent_contact_force_norm[:,0],
                                                         opponent_root_state[:, 0],  opponent_body_pos[:, 0], sword_tip_pos, sword_hit_state, self._target_ids, self.dt, self.reward_weights)
             self.rew_buf[i*self.num_envs:(i+1)*self.num_envs] = reward
-            # if flags.test:
-                # print(i, reward, reward_raw)
+
+            if i == 0:
+                # --- W&B per-component logging (every 32 steps ≈ 1 rl_games epoch) ---
+                if not hasattr(self, '_reward_acc'):
+                    self._reward_acc = {'vel': 0., 'facing': 0., 'strike': 0., 'terminate': 0., 'hit': 0., 'total': 0.}
+                    self._reward_acc_n = 0
+                rr_mean = reward_raw.mean(0)
+                self._reward_acc['vel']       += rr_mean[0].item()
+                self._reward_acc['facing']    += rr_mean[1].item()
+                self._reward_acc['strike']    += rr_mean[2].item()
+                self._reward_acc['terminate'] += rr_mean[3].item()
+                self._reward_acc['hit']       += rr_mean[4].item()
+                self._reward_acc['total']     += reward.mean().item()
+                self._reward_acc_n            += 1
+                if self._reward_acc_n >= 32:
+                    epoch_est = self.step_counter // 32
+                    rw = self.reward_weights
+                    try:
+                        import wandb
+                        if wandb.run is not None:
+                            log_data = {}
+                            for k, wk in [('vel','reward_v'),('facing','reward_f'),('strike','reward_s'),('terminate','reward_t'),('hit','reward_h')]:
+                                raw = self._reward_acc[k] / self._reward_acc_n
+                                log_data[f'rewards_raw/{k}']      = raw
+                                log_data[f'rewards_weighted/{k}'] = raw * rw[wk]
+                            log_data['rewards_raw/total'] = self._reward_acc['total'] / self._reward_acc_n
+                            wandb.log(log_data, step=epoch_est)
+                    except Exception:
+                        pass
+                    for k in self._reward_acc:
+                        self._reward_acc[k] = 0.
+                    self._reward_acc_n = 0
+
+            if flags.test and i == 0:
+                if not hasattr(self, '_reward_log'):
+                    import atexit, csv
+                    self._reward_log = []
+                    def _dump_reward_log(log=self._reward_log):
+                        if not log:
+                            return
+                        path = 'reward_analysis.csv'
+                        with open(path, 'w', newline='') as f:
+                            csv.writer(f).writerow(['step_counter', 'episode_step', 'vel', 'facing', 'strike', 'terminate', 'hit', 'total', 'w_vel', 'w_facing', 'w_strike', 'w_terminate', 'w_hit'])
+                            csv.writer(f).writerows(log)
+                        print(f"[Reward Analysis] {len(log)} steps saved to {path}")
+                    atexit.register(_dump_reward_log)
+                rw = self.reward_weights
+                rr = reward_raw[0]
+                self._reward_log.append([
+                    self.step_counter, self.progress_buf[0].item(),
+                    rr[0].item(), rr[1].item(), rr[2].item(), rr[3].item(), rr[4].item(),
+                    reward[0].item(),
+                    rw['reward_v'], rw['reward_f'], rw['reward_s'], rw['reward_t'], rw['reward_h'],
+                ])
             
         if flags.test:
             np.set_printoptions(precision=4, suppress=1)
@@ -299,14 +388,18 @@ class HumanoidFencing(humanoid_amp_task.HumanoidAMPTask):
     
 
     def _compute_reset(self):
-        game_done = torch.logical_or(self.out_bound, torch.logical_or(self.red_win, self.green_win))
-            
+        stage_cfg = self.curriculum_stages[self.curriculum_stage]
+        if stage_cfg.get("enable_win_conditions", True):
+            game_done = torch.logical_or(self.out_bound, torch.logical_or(self.red_win, self.green_win))
+        else:
+            game_done = self.out_bound  # stage 0: only out-of-bounds resets, not scoring
+
         self.reset_buf[:], self._terminate_buf[:] = compute_humanoid_reset(self.reset_buf, self.progress_buf,
                                                            self._contact_forces_list, self._contact_body_ids,
                                                            self._rigid_body_pos_list,
                                                            self._strike_body_ids, self.max_episode_length,
                                                            self._enable_early_termination, self._termination_heights, self.num_agents)
-        
+
         self.reset_buf[:], self._terminate_buf[:] = torch.logical_or(self.reset_buf, game_done), torch.logical_or(self._terminate_buf, game_done)
         return
     
@@ -384,12 +477,15 @@ class HumanoidFencingZ(HumanoidFencing):
         return
     
     def _compute_reset(self):
-        
-        game_done = torch.logical_or(self.out_bound, torch.logical_or(self.red_win, self.green_win))
+        stage_cfg = self.curriculum_stages[self.curriculum_stage]
+        if stage_cfg.get("enable_win_conditions", True):
+            game_done = torch.logical_or(self.out_bound, torch.logical_or(self.red_win, self.green_win))
+        else:
+            game_done = self.out_bound
         if self.step_counter > self.warmup_time or flags.test:
             self.reset_buf[:], self._terminate_buf[:] = compute_humanoid_reset_z(self.reset_buf, self.progress_buf,
                                                            self._contact_forces_list, self._contact_body_ids,
-                                                           self._rigid_body_pos_list, 
+                                                           self._rigid_body_pos_list,
                                                            self._strike_body_ids, self.max_episode_length,
                                                            self._enable_early_termination, self._termination_heights, self.num_agents)
         else:
@@ -496,8 +592,8 @@ def compute_fencing_reward(root_state, prev_root_pos, body_pos, self_terminated,
     hit_reward = torch.exp(10 * -hit_dist)
 
     reward = vel_reward * reward_v + facing_reward * reward_f + strike_reward * reward_s + terminate_reward * reward_t + hit_reward * reward_h
-    reward_raw = torch.stack([vel_reward, facing_reward, terminate_reward, hit_reward], dim=-1)
-    
+    reward_raw = torch.stack([vel_reward, facing_reward, strike_reward, terminate_reward, hit_reward], dim=-1)
+
     return reward, reward_raw
 
 

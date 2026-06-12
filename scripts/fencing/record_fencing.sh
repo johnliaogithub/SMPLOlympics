@@ -1,3 +1,6 @@
+export LD_LIBRARY_PATH=/pub0/johnliao/miniconda3/envs/isaac/lib:$LD_LIBRARY_PATH
+cd /pub0/johnliao/SMPLOlympics
+
 python phc/run_hydra.py \
     project_name=SMPLOlympics \
     num_agents=2 \
@@ -16,6 +19,6 @@ python phc/run_hydra.py \
     learning.params.config.switch_frequency=250 \
     test=True \
     +record_video=True \
-    +checkpoint=output/HumanoidIm/fencing_baseline/Humanoid.pth \
+    +checkpoint=output/HumanoidIm/fencing_curriculum_v2/Humanoid.pth \
     learning.params.config.player.games_num=5
 

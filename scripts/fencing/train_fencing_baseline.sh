@@ -9,6 +9,7 @@
 # Usage: bash train_fencing_baseline.sh [additional hydra params...]
 # Example: bash train_fencing_baseline.sh env.num_envs=32 learning.params.config.minibatch_size=1024
 
+export LD_LIBRARY_PATH=/pub0/johnliao/miniconda3/envs/isaac/lib:$LD_LIBRARY_PATH
 cd /pub0/johnliao/SMPLOlympics
 
 python phc/run_hydra.py \
@@ -17,7 +18,7 @@ python phc/run_hydra.py \
     learning=amp_z_self_play \
     exp_name=fencing_baseline \
     env=env_amp_z \
-    env.num_envs=16 \
+    env.num_envs=16 \  # this is overridden
     env.task=HumanoidFencingZ \
     env.enableTaskObs=True \
     env.stateInit=Start \
