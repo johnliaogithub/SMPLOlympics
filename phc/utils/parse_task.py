@@ -49,6 +49,8 @@ from phc.env.tasks.humanoid_tennis import HumanoidTennis, HumanoidTennisZ
 from phc.env.tasks.humanoid_tennis2 import HumanoidTennis2, HumanoidTennis2Z
 from phc.env.tasks.humanoid_boxing import HumanoidBoxing, HumanoidBoxingZ
 from phc.env.tasks.humanoid_fencing import HumanoidFencing, HumanoidFencingZ
+from phc.env.tasks.humanoid_fencing_drills import HumanoidFencingDrills, HumanoidFencingDrillsZ
+from phc.env.tasks.humanoid_fencing_strategy import HumanoidFencingStrategy, HumanoidFencingStrategyZ
 from phc.env.tasks.humanoid_javelin import HumanoidJavelin, HumanoidJavelinZ
 from phc.env.tasks.humanoid_golf import HumanoidGolf, HumanoidGolfZ
 from phc.env.tasks.humanoid_longjump import HumanoidLongjump, HumanoidLongjumpZ

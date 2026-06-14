@@ -147,17 +147,31 @@ class HumanoidFencing(humanoid_amp_task.HumanoidAMPTask):
         root_pos_list, root_rot_list, dof_pos_list, root_vel_list, root_ang_vel_list, dof_vel_list, rb_pos_list, rb_rot_list, body_vel_list, body_ang_vel_list = [], [], [], [], [], [], [], [], [], []
         for i in range(self.num_agents):
             motion_ids, motion_times, root_pos, root_rot, dof_pos, root_vel, root_ang_vel, dof_vel, rb_pos, rb_rot, body_vel, body_ang_vel = self._sample_ref_state(env_ids)
-            
+
+            old_root_pos = root_pos.clone()
+            old_root_rot = root_rot.clone()
             if i%2 == 0:
-                root_pos[:, :3] = torch.tensor([0, -1.5, 0.9]).to(self.device)
+                root_pos[:, 0:2] = torch.tensor([0.0, -1.5]).to(self.device)
                 root_rot[:] = torch.tensor([[0.    , 0.    , 0.7071, 0.7071]]).to(self.device)
             else:
-                root_pos[:, :3] = torch.tensor([0, 1.5, 0.9]).to(self.device)
+                root_pos[:, 0:2] = torch.tensor([0.0, 1.5]).to(self.device)
                 root_rot[:] = torch.tensor([[0.    ,  0.    , -0.7071,  0.7071]]).to(self.device)
 
+            # Keep dof_pos from the sampled motion frame (use a standing motion file).
+            # Zeroing dof_pos gives the SMPL rest pose (T-pose, legs spread), which
+            # started agents off-balance. Rigidly transform the sampled rigid bodies
+            # into the new root frame so first-frame observations match the sim state.
+            delta_quat = quat_mul(root_rot, quat_conjugate(old_root_rot))
+            B, J = rb_pos.shape[0], rb_pos.shape[1]
+            flat_quat = delta_quat[:, None, :].expand(B, J, 4).reshape(-1, 4)
+            rb_pos = quat_rotate(flat_quat, (rb_pos - old_root_pos[:, None, :]).reshape(-1, 3)).reshape(B, J, 3) + root_pos[:, None, :]
+            rb_rot = quat_mul(flat_quat, rb_rot.reshape(-1, 4)).reshape(B, J, 4)
+
             root_vel[:] = 0
+            root_ang_vel[:] = 0
             dof_vel[:] = 0
-            dof_pos[:] = 0 # zero pose for start. 
+            body_vel[:] = 0
+            body_ang_vel[:] = 0
 
             root_pos_list.append(root_pos); root_rot_list.append(root_rot); dof_pos_list.append(dof_pos); root_vel_list.append(root_vel); root_ang_vel_list.append(root_ang_vel); dof_vel_list.append(dof_vel)
             rb_pos_list.append(rb_pos); rb_rot_list.append(rb_rot); body_vel_list.append(body_vel); body_ang_vel_list.append(body_ang_vel)

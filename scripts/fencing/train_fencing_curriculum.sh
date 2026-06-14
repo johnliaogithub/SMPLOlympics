@@ -69,14 +69,18 @@ case "$STAGE" in
 esac
 
 # --- Auto-detect latest checkpoint ---
-CHECKPOINT_ARG=""
+# Training resume is controlled by epoch= (NOT +checkpoint=, which only takes
+# effect in test mode). epoch=N loads Humanoid_<N>.pth; -1 loads best; 0 = fresh.
+CHECKPOINT_ARG="epoch=0"
 if [[ "$STAGE" != "fresh" ]]; then
     LATEST_NUMBERED=$(ls ${OUTPUT_DIR}/Humanoid_[0-9]*.pth 2>/dev/null | grep -v "_op\.pth" | sort -V | tail -1)
     if [[ -n "$LATEST_NUMBERED" ]]; then
-        CHECKPOINT_ARG="+checkpoint=${LATEST_NUMBERED}"
-        echo "[Checkpoint] Resuming from: ${LATEST_NUMBERED}"
+        N=$(basename "$LATEST_NUMBERED" .pth | sed 's/Humanoid_//')
+        N=$((10#$N))   # strip leading zeros
+        CHECKPOINT_ARG="epoch=${N}"
+        echo "[Checkpoint] Resuming from epoch ${N}: ${LATEST_NUMBERED}"
     elif [[ -f "${OUTPUT_DIR}/Humanoid.pth" ]]; then
-        CHECKPOINT_ARG="+checkpoint=${OUTPUT_DIR}/Humanoid.pth"
+        CHECKPOINT_ARG="epoch=-1"
         echo "[Checkpoint] Resuming from best: ${OUTPUT_DIR}/Humanoid.pth"
     else
         echo "[Checkpoint] No checkpoint found — starting fresh."
@@ -99,7 +103,7 @@ python phc/run_hydra.py \
     env.stateInit=Start \
     robot=smpl_humanoid_fencing \
     '+env.models=[output/HumanoidIm/pulse_vae_iclr/Humanoid.pth]' \
-    env.motion_file=./sample_data/amass_isaac_simple_run_upright_slim.pkl \
+    env.motion_file=./sample_data/amass_isaac_standing_upright_slim.pkl \
     headless=True \
     env.episode_length=300 \
     learning.params.config.switch_frequency=250 \

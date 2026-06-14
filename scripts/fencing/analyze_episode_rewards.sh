@@ -32,7 +32,7 @@ python phc/run_hydra.py \
     env.stateInit=Start \
     robot=smpl_humanoid_fencing \
     '+env.models=[output/HumanoidIm/pulse_vae_iclr/Humanoid.pth]' \
-    env.motion_file=./sample_data/amass_isaac_simple_run_upright_slim.pkl \
+    env.motion_file=./sample_data/amass_isaac_standing_upright_slim.pkl \
     headless=True \
     env.episode_length=300 \
     learning.params.config.switch_frequency=250 \
