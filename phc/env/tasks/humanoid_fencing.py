@@ -66,6 +66,11 @@ class HumanoidFencing(humanoid_amp_task.HumanoidAMPTask):
         self.warmup_time = int(250/self.dt)
         self.step_counter = 0
 
+        # Per-env spawn half-distance along y (each agent at +/- this). Default 1.5
+        # => 3 m apart. Subclasses (drills) may shrink it per env so that strike
+        # drills start in range instead of 3 m away.
+        self._spawn_half_dist = torch.full((self.num_envs,), 1.5, device=self.device)
+
         # --- Curriculum ---
         # Load from the named registry in phc/utils/curriculum_configs.py.
         # Pass env.curriculum_config=<version> to select a version (default: v2).
@@ -111,12 +116,9 @@ class HumanoidFencing(humanoid_amp_task.HumanoidAMPTask):
             epoch_est = self.step_counter // 32
             msg = f"[Curriculum] Stage {self.curriculum_stage}: {stage_cfg['label']} (step {self.step_counter}, epoch ~{epoch_est})"
             print(f"\n{msg}")
-            try:
-                import wandb
-                if wandb.run is not None:
-                    wandb.log({"curriculum/stage": self.curriculum_stage, "curriculum/step": self.step_counter}, step=epoch_est)
-            except Exception:
-                pass
+            if not hasattr(self, '_tb_scalars'):
+                self._tb_scalars = {}
+            self._tb_scalars["curriculum/stage"] = float(self.curriculum_stage)
             try:
                 with open("curriculum_transitions.log", "a") as f:
                     import datetime
@@ -150,11 +152,13 @@ class HumanoidFencing(humanoid_amp_task.HumanoidAMPTask):
 
             old_root_pos = root_pos.clone()
             old_root_rot = root_rot.clone()
+            half = self._spawn_half_dist[env_ids]   # (n,) per-env spawn distance
+            root_pos[:, 0] = 0.0
             if i%2 == 0:
-                root_pos[:, 0:2] = torch.tensor([0.0, -1.5]).to(self.device)
+                root_pos[:, 1] = -half
                 root_rot[:] = torch.tensor([[0.    , 0.    , 0.7071, 0.7071]]).to(self.device)
             else:
-                root_pos[:, 0:2] = torch.tensor([0.0, 1.5]).to(self.device)
+                root_pos[:, 1] = half
                 root_rot[:] = torch.tensor([[0.    ,  0.    , -0.7071,  0.7071]]).to(self.device)
 
             # Keep dof_pos from the sampled motion frame (use a standing motion file).
@@ -349,20 +353,14 @@ class HumanoidFencing(humanoid_amp_task.HumanoidAMPTask):
                 self._reward_acc['total']     += reward.mean().item()
                 self._reward_acc_n            += 1
                 if self._reward_acc_n >= 32:
-                    epoch_est = self.step_counter // 32
                     rw = self.reward_weights
-                    try:
-                        import wandb
-                        if wandb.run is not None:
-                            log_data = {}
-                            for k, wk in [('vel','reward_v'),('facing','reward_f'),('strike','reward_s'),('terminate','reward_t'),('hit','reward_h')]:
-                                raw = self._reward_acc[k] / self._reward_acc_n
-                                log_data[f'rewards_raw/{k}']      = raw
-                                log_data[f'rewards_weighted/{k}'] = raw * rw[wk]
-                            log_data['rewards_raw/total'] = self._reward_acc['total'] / self._reward_acc_n
-                            wandb.log(log_data, step=epoch_est)
-                    except Exception:
-                        pass
+                    if not hasattr(self, '_tb_scalars'):
+                        self._tb_scalars = {}
+                    for k, wk in [('vel','reward_v'),('facing','reward_f'),('strike','reward_s'),('terminate','reward_t'),('hit','reward_h')]:
+                        raw = self._reward_acc[k] / self._reward_acc_n
+                        self._tb_scalars[f'rewards_raw/{k}']      = raw
+                        self._tb_scalars[f'rewards_weighted/{k}'] = raw * rw[wk]
+                    self._tb_scalars['rewards_raw/total'] = self._reward_acc['total'] / self._reward_acc_n
                     for k in self._reward_acc:
                         self._reward_acc[k] = 0.
                     self._reward_acc_n = 0

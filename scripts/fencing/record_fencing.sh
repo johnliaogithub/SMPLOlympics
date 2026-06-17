@@ -15,7 +15,7 @@ python phc/run_hydra.py \
     +env.models=[output/HumanoidIm/pulse_vae_iclr/Humanoid.pth] \
     env.motion_file=./sample_data/amass_isaac_standing_upright_slim.pkl \
     headless=True \
-    env.episode_length=300 \
+    env.episode_length=250 \
     learning.params.config.switch_frequency=250 \
     test=True \
     +record_video=True \

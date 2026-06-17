@@ -193,6 +193,20 @@ class RLGPUAlgoObserver(AlgoObserver):
             self.writer.add_scalar('successes/consecutive_successes/mean', mean_con_successes, frame)
             self.writer.add_scalar('successes/consecutive_successes/iter', mean_con_successes, epoch_num)
             self.writer.add_scalar('successes/consecutive_successes/time', mean_con_successes, total_time)
+
+        # Drain env-side scalars (per-drill rewards, reward components) to wandb on
+        # the SAME step axis rl_games uses (wandb.log(..., step=epoch_num) in
+        # common_agent). Matching epoch_num keeps them aligned and never dropped.
+        # NOTE: rl_games reaches wandb via direct wandb.log, NOT tensorboard sync,
+        # so writer.add_scalar here would not show up in wandb at all.
+        try:
+            task = self.algo.vec_env.env.task
+            scalars = getattr(task, '_tb_scalars', None)
+            if scalars and wandb.run is not None:
+                wandb.log(dict(scalars), step=epoch_num)
+                scalars.clear()
+        except Exception:
+            pass
         return
 
 

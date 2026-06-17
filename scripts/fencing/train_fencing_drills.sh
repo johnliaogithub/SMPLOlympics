@@ -18,11 +18,21 @@
 export LD_LIBRARY_PATH=/pub0/johnliao/miniconda3/envs/isaac/lib:$LD_LIBRARY_PATH
 cd /pub0/johnliao/SMPLOlympics
 
-EXP_NAME=fencing_drills_v1
+# Shared box: auto-pick the GPU with the most free memory (override by setting
+# CUDA_VISIBLE_DEVICES yourself before calling this script).
+if [[ -z "$CUDA_VISIBLE_DEVICES" ]]; then
+    export CUDA_DEVICE_ORDER=PCI_BUS_ID
+    export CUDA_VISIBLE_DEVICES=$(nvidia-smi --query-gpu=index,memory.free \
+        --format=csv,noheader,nounits | sort -t, -k2 -nr | head -1 | cut -d, -f1 | tr -d ' ')
+    echo "[GPU] auto-selected GPU ${CUDA_VISIBLE_DEVICES} (most free memory)"
+fi
+
+EXP_NAME=fencing_drills_v3  #fencing_drills_v1
 OUTPUT_DIR=output/HumanoidIm/${EXP_NAME}
 
+# Drill order: advance retreat stand lunge_upper lunge_groin dodge step_left step_right
 PHASE="${1:-A}"
-if [[ "$PHASE" =~ ^[ABab]$ ]] || [[ "$PHASE" == "fresh" ]]; then
+if [[ "$PHASE" =~ ^[ABDabd]$ ]] || [[ "$PHASE" == "fresh" ]]; then
     shift
 else
     PHASE="A"
@@ -30,12 +40,17 @@ fi
 
 case "$PHASE" in
   B|b)
-    echo "[Phase] B: all six drills (incl. dodge)"
-    DRILL_ARGS="+env.drill_probs=[1,1,1,1,1,1]"
+    echo "[Phase] B: all drills incl. dodge (vs lunging opponent)"
+    DRILL_ARGS="+env.drill_probs=[1,1,1,1,1,1,1,1]"
+    ;;
+  D|d)
+    echo "[Phase] D: emphasize the new/lunge drills (warm-started net)"
+    # upweight lunges + lateral footwork; keep a little of the basics for retention
+    DRILL_ARGS="+env.drill_probs=[0.3,0.3,0.3,1,1,0.5,1,1]"
     ;;
   *)
-    echo "[Phase] A: locomotion + lunge drills, no dodge"
-    DRILL_ARGS="+env.drill_probs=[1,1,1,1,1,0]"
+    echo "[Phase] A: locomotion + lunge drills + lateral footwork, no dodge"
+    DRILL_ARGS="+env.drill_probs=[1,1,1,1,1,0,1,1]"
     ;;
 esac
 
@@ -76,7 +91,7 @@ python phc/run_hydra.py \
     '+env.models=[output/HumanoidIm/pulse_vae_iclr/Humanoid.pth]' \
     env.motion_file=./sample_data/amass_isaac_standing_upright_slim.pkl \
     headless=True \
-    env.episode_length=300 \
+    env.episode_length=250 \
     learning.params.config.switch_frequency=1000000000 \
     learning.params.config.task_reward_w=1.0 \
     learning.params.config.disc_reward_w=0.0 \
