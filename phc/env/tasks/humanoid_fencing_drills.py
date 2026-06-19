@@ -54,6 +54,9 @@ class HumanoidFencingDrills(HumanoidFencing):
         self._upper_target_ids = self._build_key_body_ids_tensor(["Chest", "Neck", "Head"])
         self._groin_target_ids = self._build_key_body_ids_tensor(["Pelvis"])
         self._right_foot_id = self._build_key_body_ids_tensor(["R_Ankle"])  # front/lunging foot
+        # Pelvis->Chest vector is the "spine" direction, used for the upright posture term.
+        self._pelvis_id = self._build_key_body_ids_tensor(["Pelvis"])
+        self._chest_id = self._build_key_body_ids_tensor(["Chest"])
 
         # Per-env drill assignment. Agent 0 = learner drill, agent 1 = opponent drill.
         self.drill_ids = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
@@ -75,6 +78,16 @@ class HumanoidFencingDrills(HumanoidFencing):
         # (agents spawn with the sword pointing at the ground).
         self.sword_ref_step = cfg["env"].get("sword_ref_step", 15)
 
+        # Optional shorter episode cap for the strike drills (lunge_upper/groin/dodge).
+        # 0 => use the global episode length. e.g. +env.strike_episode_length=50 makes
+        # lunge envs time out fast so the agent must commit to a lunge instead of a
+        # slow walk-in. This is per-env in the SHARED net — no separate training run.
+        self.strike_episode_length = cfg["env"].get("strike_episode_length", 0)
+        # Spawn half-distance for strike drills (each agent at +/- this along y).
+        # 0.875 => 1.75 m apart, ~lunge range. Tune together with strike_episode_length:
+        # closer spawn + shorter episode forces a pure lunge.
+        self.strike_spawn_half_dist = cfg["env"].get("strike_spawn_half_dist", 0.875)
+
         self._prev_head_pos_list = [torch.zeros([self.num_envs, 3], device=self.device, dtype=torch.float)
                                     for _ in range(self.num_agents)]
         # Sword-tip position last frame, for the lunge thrust-speed reward.
@@ -85,6 +98,9 @@ class HumanoidFencingDrills(HumanoidFencing):
         # scores high while a slash (which rotates the blade) does not.
         self._sword_dir_0_list = [torch.zeros([self.num_envs, 3], device=self.device, dtype=torch.float)
                                   for _ in range(self.num_agents)]
+        # Right-foot position last frame, for the potential-based foot approach term.
+        self._prev_foot_pos_list = [torch.zeros([self.num_envs, 3], device=self.device, dtype=torch.float)
+                                    for _ in range(self.num_agents)]
 
     def get_task_obs_size(self):
         obs_size = super().get_task_obs_size()
@@ -121,7 +137,7 @@ class HumanoidFencingDrills(HumanoidFencing):
         # drills keep the default 1.5 half-distance (3 m apart).
         in_range = (new_drills == D_LUNGE_UPPER) | (new_drills == D_LUNGE_GROIN) | (new_drills == D_DODGE)
         self._spawn_half_dist[env_ids] = torch.where(
-            in_range, torch.full_like(self._spawn_half_dist[env_ids], 1.25),   # 2.5 m apart
+            in_range, torch.full_like(self._spawn_half_dist[env_ids], self.strike_spawn_half_dist),
             torch.full_like(self._spawn_half_dist[env_ids], 1.5))
 
     def _reset_envs(self, env_ids):
@@ -133,6 +149,7 @@ class HumanoidFencingDrills(HumanoidFencing):
             for i in range(self.num_agents):
                 self._prev_head_pos_list[i][env_ids] = self._rigid_body_pos_list[i][env_ids, self._head_id[0]]
                 self._prev_sword_tip_list[i][env_ids] = tips[i][env_ids, 0]
+                self._prev_foot_pos_list[i][env_ids] = self._rigid_body_pos_list[i][env_ids, self._right_foot_id[0]]
                 # Invalidate the thrust line; it is (re)captured at step sword_ref_step.
                 # While zero, thrust_align_r = dot(dir, 0) = 0 (no thrust reward yet).
                 self._sword_dir_0_list[i][env_ids] = 0.0
@@ -143,6 +160,7 @@ class HumanoidFencingDrills(HumanoidFencing):
         for i in range(self.num_agents):
             self._prev_head_pos_list[i] = self._rigid_body_pos_list[i][:, self._head_id[0]].clone()
             self._prev_sword_tip_list[i] = tips[i][:, 0].clone()
+            self._prev_foot_pos_list[i] = self._rigid_body_pos_list[i][:, self._right_foot_id[0]].clone()
 
     def post_physics_step(self):
         super().post_physics_step()
@@ -206,6 +224,14 @@ class HumanoidFencingDrills(HumanoidFencing):
         # standing still
         still_r = torch.exp(-2.0 * torch.linalg.norm(root_vel, dim=-1))
 
+        # posture: keep the torso upright. spine = pelvis->chest; its z-component is
+        # 1.0 when the spine is vertical, dropping as the torso bends over. Applied
+        # (small) to every drill so the agent stops folding forward and toppling.
+        pelvis_pos = self._rigid_body_pos_list[i][:, self._pelvis_id[0]]
+        chest_pos = self._rigid_body_pos_list[i][:, self._chest_id[0]]
+        spine_up = F.normalize(chest_pos - pelvis_pos, dim=-1)
+        posture_r = torch.clamp(spine_up[..., 2], 0.0, 1.0)
+
         # --- lunge: reward a straight THRUST that lands, NOT a slash or a walk-in ---
         tip = sword_tip_pos_list[i][:, 0]                  # (N, 3)
         opp_body_pos = self._rigid_body_pos_list[1 - i]
@@ -213,26 +239,43 @@ class HumanoidFencingDrills(HumanoidFencing):
 
         # Thrust quality (professor's idea): how aligned the sword still is with the
         # "thrust line" captured at episode start. A thrust keeps the blade pointed
-        # the same way (align ~1); a slash rotates it (align drops).
+        # the same way (align ~1); a slash rotates it (align drops). The thrust line
+        # is captured at step sword_ref_step, so this is zero before then.
         hand = self._rigid_body_pos_list[i][:, self._hand_ids[0]]
         sword_dir = F.normalize(tip - hand, dim=-1)
         thrust_align_r = torch.clamp(torch.sum(sword_dir * self._sword_dir_0_list[i], dim=-1), 0.0, 1.0)
+        # Before the thrust line is captured, reward AIMING the sword at the target
+        # instead, so the captured line actually points at the opponent.
+        pre_ref = (self.progress_buf <= self.sword_ref_step).float()
 
-        # Right (front) foot approach: the lunging foot drives toward the opponent.
+        # Front-foot position (now and last frame) for potential-based foot progress.
         foot_xy = self._rigid_body_pos_list[i][:, self._right_foot_id[0], 0:2]
-        foot_approach = torch.exp(-0.7 * torch.linalg.norm(foot_xy - opp_xy, dim=-1))
+        prev_foot_xy = self._prev_foot_pos_list[i][:, 0:2]
+        prev_tip = self._prev_sword_tip_list[i]            # (N, 3)
 
         def lunge_reward(target_ids):
             tgts = opp_body_pos[:, target_ids]             # (N, k, 3)
-            dist = torch.linalg.norm(tip[:, None, :] - tgts, dim=-1).min(dim=-1).values
-            # approach: tip-to-target (primary) + front-foot-to-opponent (secondary),
-            # dense from 2.5 m. exp(-0.7*d): 0.17 @ 2.5 m, 0.50 @ 1 m, 0.81 @ 0.3 m.
-            tip_approach = torch.exp(-0.7 * dist)
-            approach_r = 0.7 * tip_approach + 0.3 * foot_approach
+            d = torch.linalg.norm(tip[:, None, :] - tgts, dim=-1)   # (N, k)
+            dist, idx = d.min(dim=-1)
+            nearest = torch.gather(tgts, 1, idx[:, None, None].expand(-1, 1, 3)).squeeze(1)
+            prev_dist = torch.linalg.norm(prev_tip[:, None, :] - tgts, dim=-1).min(dim=-1).values
+            # POTENTIAL-BASED approach (Ng et al. shaping): reward the *change* in
+            # closeness, Phi(s') - Phi(s), with Phi = exp(-0.7*dist). This telescopes
+            # over the episode, so hovering near the target earns ~0 (no farming) and
+            # backing off costs what closing paid. Only NET progress is rewarded.
+            tip_prog = torch.exp(-0.7 * dist) - torch.exp(-0.7 * prev_dist)
+            foot_prog = torch.exp(-0.7 * torch.linalg.norm(foot_xy - opp_xy, dim=-1)) \
+                      - torch.exp(-0.7 * torch.linalg.norm(prev_foot_xy - opp_xy, dim=-1))
+            approach_r = torch.clamp(8.0 * (0.7 * tip_prog + 0.3 * foot_prog), -1.0, 1.0)
+            # Aim (first sword_ref_step steps only): point the blade at the target
+            # point so the thrust line captured at step sword_ref_step is on-target.
+            aim_r = torch.clamp(torch.sum(sword_dir * F.normalize(nearest - tip, dim=-1), dim=-1), 0.0, 1.0) * pre_ref
             force = torch.linalg.norm(self._contact_forces_list[1 - i][:, target_ids], dim=-1).max(dim=-1).values
             hit = self._check_hit_subset(i, target_ids).float()
-            hit_r = hit * (0.5 + 0.5 * torch.clamp(force / 300.0, 0.0, 1.0))  # landed + strength
-            return 0.25 * approach_r + 0.25 * thrust_align_r + 0.10 * facing_r + 0.40 * hit_r
+            # Large TERMINAL hit bonus (episode ends on hit) so landing the strike
+            # dominates any residual shaping — the agent cannot out-earn it by stalling.
+            hit_r = hit * (1.0 + torch.clamp(force / 300.0, 0.0, 1.0))   # 1.0 .. 2.0
+            return 0.30 * approach_r + 0.20 * thrust_align_r + 0.20 * aim_r + 0.10 * facing_r + 1.0 * hit_r
 
         r_lunge_u = lunge_reward(self._upper_target_ids)
         r_lunge_g = lunge_reward(self._groin_target_ids)
@@ -240,8 +283,12 @@ class HumanoidFencingDrills(HumanoidFencing):
         # --- lateral footwork: step left / right while staying square to opponent ---
         left_dir = torch.stack([-tar_dir[..., 1], tar_dir[..., 0]], dim=-1)   # rotate +90 deg in xy
         lat_left = torch.sum(root_vel[..., 0:2] * left_dir, dim=-1)
-        r_step_left = 0.50 * speed_shaping(lat_left, 0.8) + 0.20 * facing_r + 0.30 * head_stab_r
-        r_step_right = 0.50 * speed_shaping(-lat_left, 0.8) + 0.20 * facing_r + 0.30 * head_stab_r
+        # No head_stab on locomotion drills: it penalizes the natural head-bob of
+        # walking so hard that standing still becomes a local optimum (small steps
+        # lose more stability than they gain in velocity). Uprightness is enforced
+        # by fall-termination + the PULSE motion prior instead.
+        r_step_left = 0.70 * speed_shaping(lat_left, 0.8) + 0.30 * facing_r
+        r_step_right = 0.70 * speed_shaping(-lat_left, 0.8) + 0.30 * facing_r
 
         # --- dodge: keep opponent's sword tip away from own target bodies ---
         opp_tip = sword_tip_pos_list[1 - i]
@@ -250,16 +297,18 @@ class HumanoidFencingDrills(HumanoidFencing):
         avoid_r = 1.0 - torch.exp(-2.0 * threat_dist)
         im_hit = self.sword_hit_list[1 - i].squeeze(-1).float()
 
-        r_advance = 0.50 * vel_toward_r + 0.20 * facing_r + 0.30 * head_stab_r
-        r_retreat = 0.50 * vel_away_r + 0.20 * facing_r + 0.30 * head_stab_r
-        r_stand = 0.60 * still_r + 0.20 * facing_r + 0.20 * head_stab_r
+        r_advance = 0.70 * vel_toward_r + 0.30 * facing_r
+        r_retreat = 0.70 * vel_away_r + 0.30 * facing_r
+        r_stand = 0.60 * still_r + 0.20 * facing_r + 0.20 * head_stab_r  # stand WANTS stillness
         # dodge: NO head-stability term — it would penalize the very evasive motion
         # dodging requires. Reward keeping the opponent's tip away + staying oriented.
         r_dodge = 0.60 * avoid_r + 0.40 * facing_r - 1.00 * im_hit
 
         all_r = torch.stack([r_advance, r_retreat, r_stand, r_lunge_u, r_lunge_g,
                              r_dodge, r_step_left, r_step_right], dim=-1)
-        return all_r.gather(-1, drill_ids[:, None]).squeeze(-1)
+        # Small upright-posture bonus added to EVERY drill (stops the torso folding
+        # forward and toppling, e.g. when retreating or lunging).
+        return all_r.gather(-1, drill_ids[:, None]).squeeze(-1) + 0.15 * posture_r
 
     def _compute_reward(self, actions):
         sword_tip_pos_list = self.get_sword_tip_pos()
@@ -304,13 +353,18 @@ class HumanoidFencingDrills(HumanoidFencing):
         # clean strike instead of farming reward by continuously poking the sword.
         #   lunge drills : end when the LEARNER lands a hit on the opponent
         #   dodge drill  : end when the OPPONENT lands a hit on the learner (dodge failed)
+        # Plus an optional shorter timeout for the strike drills (strike_episode_length).
+        strike_mask = (self.drill_ids == D_LUNGE_UPPER) | (self.drill_ids == D_LUNGE_GROIN) | (self.drill_ids == D_DODGE)
+        done = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        if self.strike_episode_length > 0:
+            done |= strike_mask & (self.progress_buf >= self.strike_episode_length)
         if not hasattr(self, 'sword_hit_list'):
-            return torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+            return done
         learner_hit = self.sword_hit_list[0].squeeze(-1).bool()   # agent 0 hit opponent
         got_hit = self.sword_hit_list[1].squeeze(-1).bool()       # opponent hit agent 0
         lunge_mask = (self.drill_ids == D_LUNGE_UPPER) | (self.drill_ids == D_LUNGE_GROIN)
         dodge_mask = self.drill_ids == D_DODGE
-        return (lunge_mask & learner_hit) | (dodge_mask & got_hit)
+        return done | (lunge_mask & learner_hit) | (dodge_mask & got_hit)
 
     def _compute_reset(self):
         # drills have no win conditions — only out-of-bounds, falls, and decisive hits

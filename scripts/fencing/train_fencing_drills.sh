@@ -11,7 +11,7 @@
 #           the snapshot opponent already knows how to lunge.
 #   fresh — phase A from scratch, ignoring existing checkpoints.
 #
-# NOTE: switch_frequency is set astronomically high on purpose. Agent 0 is always
+# NOTE: sitch_frequency is set astronomically high on purpose. Agent 0 is always
 # the learner; agent 1 is frozen (its Z-actions are overridden), so its recorded
 # experience must never be used for updates.
 
@@ -27,7 +27,7 @@ if [[ -z "$CUDA_VISIBLE_DEVICES" ]]; then
     echo "[GPU] auto-selected GPU ${CUDA_VISIBLE_DEVICES} (most free memory)"
 fi
 
-EXP_NAME=fencing_drills_v3  #fencing_drills_v1
+EXP_NAME=fencing_drills_v4  #fencing_drills_v1
 OUTPUT_DIR=output/HumanoidIm/${EXP_NAME}
 
 # Drill order: advance retreat stand lunge_upper lunge_groin dodge step_left step_right
@@ -91,7 +91,8 @@ python phc/run_hydra.py \
     '+env.models=[output/HumanoidIm/pulse_vae_iclr/Humanoid.pth]' \
     env.motion_file=./sample_data/amass_isaac_standing_upright_slim.pkl \
     headless=True \
-    env.episode_length=250 \
+    env.episode_length=175 \
+    +env.strike_episode_length=50 \
     learning.params.config.switch_frequency=1000000000 \
     learning.params.config.task_reward_w=1.0 \
     learning.params.config.disc_reward_w=0.0 \

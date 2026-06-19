@@ -105,7 +105,7 @@ python phc/run_hydra.py \
     '+env.models=[output/HumanoidIm/pulse_vae_iclr/Humanoid.pth]' \
     env.motion_file=./sample_data/amass_isaac_standing_upright_slim.pkl \
     headless=True \
-    env.episode_length=250 \
+    env.episode_length=175 \
     learning.params.config.switch_frequency=250 \
     learning.params.config.task_reward_w=1.0 \
     learning.params.config.disc_reward_w=0.0 \

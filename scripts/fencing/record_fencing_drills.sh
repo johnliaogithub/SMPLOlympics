@@ -9,7 +9,7 @@
 export LD_LIBRARY_PATH=/pub0/johnliao/miniconda3/envs/isaac/lib:$LD_LIBRARY_PATH
 cd /pub0/johnliao/SMPLOlympics
 
-LOW_LEVEL="${1:-output/HumanoidIm/fencing_drills_v3/Humanoid.pth}"
+LOW_LEVEL="${1:-output/HumanoidIm/fencing_drills_v4/Humanoid.pth}"
 echo "[viz] low-level policy: ${LOW_LEVEL}"
 
 python phc/visualize_drills.py \
@@ -27,6 +27,6 @@ python phc/visualize_drills.py \
     env.motion_file=./sample_data/amass_isaac_standing_upright_slim.pkl \
     headless=True \
     +record_video=True \
-    env.episode_length=250 \
+    env.episode_length=175 \
     "+env.low_level_checkpoint=${LOW_LEVEL}" \
     +env.clip_len=120

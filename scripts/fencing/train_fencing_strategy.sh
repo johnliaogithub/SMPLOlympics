@@ -34,7 +34,7 @@ python phc/train_fencing_strategy.py \
     '+env.models=[output/HumanoidIm/pulse_vae_iclr/Humanoid.pth]' \
     env.motion_file=./sample_data/amass_isaac_standing_upright_slim.pkl \
     headless=True \
-    env.episode_length=250 \
+    env.episode_length=175 \
     "+env.low_level_checkpoint=${LOW_LEVEL}" \
     +env.macro_K=15 \
     "$@"
