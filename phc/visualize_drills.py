@@ -65,10 +65,12 @@ def render_drills(cfg, task, low_level, out_path):
             "graphics unless record_video is set — launch with +record_video=True.")
     N = task.num_envs
     clip_len = cfg.env.get("clip_len", 120)   # steps per drill (~4s @ 30Hz)
+    # Which drills to render; default = all. e.g. +env.viz_drills=[3,4] for lunges only.
+    drills_to_show = cfg.env.get("viz_drills", list(range(NUM_DRILLS)))
 
     writer = imageio.get_writer(out_path, fps=30, macro_block_size=None)
 
-    for d in range(NUM_DRILLS):
+    for d in drills_to_show:
         is_dodge = (d == D_DODGE)
         opp = D_LUNGE_UPPER if is_dodge else D_STAND
         subtitle = "vs lunging opponent" if is_dodge else "vs idle opponent"

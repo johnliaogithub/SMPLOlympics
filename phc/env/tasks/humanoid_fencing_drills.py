@@ -87,6 +87,11 @@ class HumanoidFencingDrills(HumanoidFencing):
         # 0.875 => 1.75 m apart, ~lunge range. Tune together with strike_episode_length:
         # closer spawn + shorter episode forces a pure lunge.
         self.strike_spawn_half_dist = cfg["env"].get("strike_spawn_half_dist", 0.875)
+        # Weight of the upright-posture term in the lunge. Crank it (e.g. 1.0) to test
+        # whether an UPRIGHT lunge is even reachable in the PULSE action space: if the
+        # agent still hunches with a huge posture reward, the upright lunge is likely
+        # off-manifold (an action-space limit, not a reward bug).
+        self.lunge_posture_weight = cfg["env"].get("lunge_posture_weight", 0.20)
 
         self._prev_head_pos_list = [torch.zeros([self.num_envs, 3], device=self.device, dtype=torch.float)
                                     for _ in range(self.num_agents)]
@@ -235,7 +240,6 @@ class HumanoidFencingDrills(HumanoidFencing):
         # --- lunge: reward a straight THRUST that lands, NOT a slash or a walk-in ---
         tip = sword_tip_pos_list[i][:, 0]                  # (N, 3)
         opp_body_pos = self._rigid_body_pos_list[1 - i]
-        opp_xy = opp_root_pos[..., 0:2]
 
         # Thrust quality (professor's idea): how aligned the sword still is with the
         # "thrust line" captured at episode start. A thrust keeps the blade pointed
@@ -248,9 +252,6 @@ class HumanoidFencingDrills(HumanoidFencing):
         # instead, so the captured line actually points at the opponent.
         pre_ref = (self.progress_buf <= self.sword_ref_step).float()
 
-        # Front-foot position (now and last frame) for potential-based foot progress.
-        foot_xy = self._rigid_body_pos_list[i][:, self._right_foot_id[0], 0:2]
-        prev_foot_xy = self._prev_foot_pos_list[i][:, 0:2]
         prev_tip = self._prev_sword_tip_list[i]            # (N, 3)
 
         def lunge_reward(target_ids):
@@ -264,18 +265,43 @@ class HumanoidFencingDrills(HumanoidFencing):
             # over the episode, so hovering near the target earns ~0 (no farming) and
             # backing off costs what closing paid. Only NET progress is rewarded.
             tip_prog = torch.exp(-0.7 * dist) - torch.exp(-0.7 * prev_dist)
-            foot_prog = torch.exp(-0.7 * torch.linalg.norm(foot_xy - opp_xy, dim=-1)) \
-                      - torch.exp(-0.7 * torch.linalg.norm(prev_foot_xy - opp_xy, dim=-1))
-            approach_r = torch.clamp(8.0 * (0.7 * tip_prog + 0.3 * foot_prog), -1.0, 1.0)
+            # TIP-ONLY approach: reward is earned only by bringing the SWORD TIP to the
+            # target, not the foot/body. Walking in with the blade dragging leaves the
+            # tip far from the (raised) target, so it earns nothing — the agent must
+            # lift and aim the blade. (foot_prog removed: it let the lunge farm approach
+            # by walking forward without ever using the sword, which is what made the
+            # whole net default to "walk forward + drag sword".)
+            approach_r = torch.clamp(8.0 * tip_prog, -1.0, 1.0)
             # Aim (first sword_ref_step steps only): point the blade at the target
             # point so the thrust line captured at step sword_ref_step is on-target.
             aim_r = torch.clamp(torch.sum(sword_dir * F.normalize(nearest - tip, dim=-1), dim=-1), 0.0, 1.0) * pre_ref
             force = torch.linalg.norm(self._contact_forces_list[1 - i][:, target_ids], dim=-1).max(dim=-1).values
             hit = self._check_hit_subset(i, target_ids).float()
-            # Large TERMINAL hit bonus (episode ends on hit) so landing the strike
-            # dominates any residual shaping — the agent cannot out-earn it by stalling.
             hit_r = hit * (1.0 + torch.clamp(force / 300.0, 0.0, 1.0))   # 1.0 .. 2.0
-            return 0.30 * approach_r + 0.20 * thrust_align_r + 0.20 * aim_r + 0.10 * facing_r + 1.0 * hit_r
+            # approach is potential (0 when not closing); thrust form GATED to pay only
+            # while closing; aim only the first few steps; hit is the dominant goal.
+            # posture (upright) penalizes reaching the target by HUNCHING the back
+            # instead of lunging (a real lunge-lean ~0.77 beats a fold-over ~0.3); the
+            # per-step time cost rewards hitting FAST (explosive lunge) over a slow
+            # creep. posture and the time cost cancel for an upright stand (=> ~0, no
+            # farm and no suicide), but standing never lands the +5 hit.
+            close_gate = (approach_r > 0).float()
+            # EXPLOSIVENESS: reward FAST sword-tip speed toward the target, gated to
+            # near the target (exp(-1.5*dist)) so it is the committed strike, not a wave
+            # from afar. This is what turns a slow reach / forward-topple into a sharp
+            # thrust. Standing earns 0 (far => gate 0); farming it requires being at the
+            # target, where the +5 hit dominates anyway.
+            tip_vel = (tip - prev_tip) / dt
+            tip_speed_to_tgt = torch.clamp_min(
+                torch.sum(tip_vel * F.normalize(nearest - tip, dim=-1), dim=-1), 0.0)
+            explosive_r = torch.clamp(tip_speed_to_tgt / 3.0, 0.0, 1.0) * torch.exp(-1.5 * dist)
+            return (0.40 * approach_r
+                    + 0.30 * explosive_r
+                    + 0.15 * thrust_align_r * close_gate
+                    + 0.10 * aim_r
+                    + self.lunge_posture_weight * posture_r
+                    + 5.0 * hit_r
+                    - 0.20)
 
         r_lunge_u = lunge_reward(self._upper_target_ids)
         r_lunge_g = lunge_reward(self._groin_target_ids)
@@ -287,8 +313,13 @@ class HumanoidFencingDrills(HumanoidFencing):
         # walking so hard that standing still becomes a local optimum (small steps
         # lose more stability than they gain in velocity). Uprightness is enforced
         # by fall-termination + the PULSE motion prior instead.
-        r_step_left = 0.70 * speed_shaping(lat_left, 0.8) + 0.30 * facing_r
-        r_step_right = 0.70 * speed_shaping(-lat_left, 0.8) + 0.30 * facing_r
+        # No facing on the step drills (rewarding facing while stepping laterally is
+        # just orbiting). Reward lateral velocity, but GATE it by a drift penalty on
+        # the toward/away component so the agent sidesteps in a STRAIGHT line instead
+        # of walking forward / spiralling in: the gate is 1 only when speed_toward≈0.
+        drift_gate = torch.exp(-3.0 * speed_toward ** 2)
+        r_step_left = speed_shaping(lat_left, 0.8) * drift_gate
+        r_step_right = speed_shaping(-lat_left, 0.8) * drift_gate
 
         # --- dodge: keep opponent's sword tip away from own target bodies ---
         opp_tip = sword_tip_pos_list[1 - i]
@@ -306,9 +337,12 @@ class HumanoidFencingDrills(HumanoidFencing):
 
         all_r = torch.stack([r_advance, r_retreat, r_stand, r_lunge_u, r_lunge_g,
                              r_dodge, r_step_left, r_step_right], dim=-1)
-        # Small upright-posture bonus added to EVERY drill (stops the torso folding
-        # forward and toppling, e.g. when retreating or lunging).
-        return all_r.gather(-1, drill_ids[:, None]).squeeze(-1) + 0.15 * posture_r
+        # Upright-posture bonus on every drill EXCEPT the lunges: there, an
+        # always-positive standing term let the agent farm reward by posing instead
+        # of striking. The lunge keeps form via its own (gated) thrust/aim terms.
+        lunge_mask = (drill_ids == D_LUNGE_UPPER) | (drill_ids == D_LUNGE_GROIN)
+        posture_bonus = 0.15 * posture_r * (~lunge_mask).float()
+        return all_r.gather(-1, drill_ids[:, None]).squeeze(-1) + posture_bonus
 
     def _compute_reward(self, actions):
         sword_tip_pos_list = self.get_sword_tip_pos()

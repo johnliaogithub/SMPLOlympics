@@ -27,16 +27,20 @@ if [[ -z "$CUDA_VISIBLE_DEVICES" ]]; then
     echo "[GPU] auto-selected GPU ${CUDA_VISIBLE_DEVICES} (most free memory)"
 fi
 
-EXP_NAME=fencing_drills_v4  #fencing_drills_v1
-OUTPUT_DIR=output/HumanoidIm/${EXP_NAME}
-
 # Drill order: advance retreat stand lunge_upper lunge_groin dodge step_left step_right
 PHASE="${1:-A}"
-if [[ "$PHASE" =~ ^[ABDabd]$ ]] || [[ "$PHASE" == "fresh" ]]; then
+if [[ "$PHASE" =~ ^[ABDLabdl]$ ]] || [[ "$PHASE" == "fresh" ]]; then
     shift
 else
     PHASE="A"
 fi
+
+# Lunge-only diagnostic gets its OWN experiment dir so it never touches v4.
+case "$PHASE" in
+  L|l) EXP_NAME=fencing_lunge_only ;;
+  *)   EXP_NAME=fencing_drills_v4 ;;
+esac
+OUTPUT_DIR=output/HumanoidIm/${EXP_NAME}
 
 case "$PHASE" in
   B|b)
@@ -47,6 +51,10 @@ case "$PHASE" in
     echo "[Phase] D: emphasize the new/lunge drills (warm-started net)"
     # upweight lunges + lateral footwork; keep a little of the basics for retention
     DRILL_ARGS="+env.drill_probs=[0.3,0.3,0.3,1,1,0.5,1,1]"
+    ;;
+  L|l)
+    echo "[Phase] L: LUNGE ONLY (diagnostic: is an upright lunge reachable in PULSE?)"
+    DRILL_ARGS="+env.drill_probs=[0,0,0,1,1,0,0,0]"
     ;;
   *)
     echo "[Phase] A: locomotion + lunge drills + lateral footwork, no dodge"
