@@ -62,6 +62,11 @@ class HumanoidFencingDrills(HumanoidFencing):
         self.drill_ids = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
         self.opp_drill_ids = torch.full((self.num_envs,), D_STAND, dtype=torch.long, device=self.device)
         self.opp_frozen = torch.ones(self.num_envs, dtype=torch.bool, device=self.device)
+        # Two-phase lunge: True once the learner's lunge has landed this episode. After
+        # that the lunge env switches from the strike reward to a recovery/stand reward
+        # (return to a balanced en-garde) — which only a real foot-forward lunge can do,
+        # so requiring recovery pressures the agent off the hand-reach-and-topple.
+        self._lunge_landed = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
 
         # Sampling distribution over drills, e.g. +env.drill_probs=[1,1,1,1,1,0] for phase A (no dodge)
         drill_probs = cfg["env"].get("drill_probs", [1.0] * NUM_DRILLS)
@@ -92,6 +97,10 @@ class HumanoidFencingDrills(HumanoidFencing):
         # agent still hunches with a huge posture reward, the upright lunge is likely
         # off-manifold (an action-space limit, not a reward bug).
         self.lunge_posture_weight = cfg["env"].get("lunge_posture_weight", 0.20)
+        # Two-phase lunge (v5+): episode does NOT end on the lunge hit; it switches to a
+        # recovery/stand reward. Set False to reproduce v4-and-earlier behavior where the
+        # lunge episode ended immediately on the hit. Logged to W&B config per run.
+        self.lunge_two_phase = cfg["env"].get("lunge_two_phase", True)
 
         self._prev_head_pos_list = [torch.zeros([self.num_envs, 3], device=self.device, dtype=torch.float)
                                     for _ in range(self.num_agents)]
@@ -148,6 +157,7 @@ class HumanoidFencingDrills(HumanoidFencing):
     def _reset_envs(self, env_ids):
         if len(env_ids) > 0:
             self._resample_drills(env_ids)
+            self._lunge_landed[env_ids] = False   # new episode => back to strike phase
         super()._reset_envs(env_ids)
         if len(env_ids) > 0:
             tips = self.get_sword_tip_pos()
@@ -303,8 +313,12 @@ class HumanoidFencingDrills(HumanoidFencing):
                     + 5.0 * hit_r
                     - 0.20)
 
-        r_lunge_u = lunge_reward(self._upper_target_ids)
-        r_lunge_g = lunge_reward(self._groin_target_ids)
+        # Two-phase lunge: before the hit lands -> strike reward; after -> recovery
+        # (return to a balanced upright stand). Only a real foot-forward lunge can
+        # recover, so this pressures the agent off the hand-reach-and-topple.
+        recovery_r = 0.5 * still_r + 0.3 * posture_r + 0.2 * facing_r
+        r_lunge_u = torch.where(self._lunge_landed, recovery_r, lunge_reward(self._upper_target_ids))
+        r_lunge_g = torch.where(self._lunge_landed, recovery_r, lunge_reward(self._groin_target_ids))
 
         # --- lateral footwork: step left / right while staying square to opponent ---
         left_dir = torch.stack([-tar_dir[..., 1], tar_dir[..., 0]], dim=-1)   # rotate +90 deg in xy
@@ -356,6 +370,15 @@ class HumanoidFencingDrills(HumanoidFencing):
 
             if i == 0:
                 self._log_drill_rewards(reward)
+
+        # Latch the lunge phase AFTER rewards are computed (so the hit step itself gets
+        # the strike reward + the +5 bonus; the NEXT step switches to recovery).
+        # Only in two-phase mode; otherwise the episode ends on the hit (see _drill_hit_done)
+        # and _lunge_landed stays False, so the recovery branch is never selected.
+        if self.lunge_two_phase:
+            lunge_mask = (self.drill_ids == D_LUNGE_UPPER) | (self.drill_ids == D_LUNGE_GROIN)
+            learner_hit = self.sword_hit_list[0].squeeze(-1).bool()
+            self._lunge_landed |= lunge_mask & learner_hit
         return
 
     def _log_drill_rewards(self, reward):
@@ -383,22 +406,26 @@ class HumanoidFencingDrills(HumanoidFencing):
             self._drill_log_n = 0
 
     def _drill_hit_done(self):
-        # End the episode on a decisive sword contact so the agent commits to ONE
-        # clean strike instead of farming reward by continuously poking the sword.
-        #   lunge drills : end when the LEARNER lands a hit on the opponent
-        #   dodge drill  : end when the OPPONENT lands a hit on the learner (dodge failed)
-        # Plus an optional shorter timeout for the strike drills (strike_episode_length).
+        # Strike drills end on the strike_episode_length timeout. The LUNGE no longer
+        # ends on its hit — it continues into the recovery phase (see _lunge_landed), so
+        # the agent must land AND recover within the window. Dodge still ends when the
+        # opponent lands a hit on the learner (dodge failed).
         strike_mask = (self.drill_ids == D_LUNGE_UPPER) | (self.drill_ids == D_LUNGE_GROIN) | (self.drill_ids == D_DODGE)
         done = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         if self.strike_episode_length > 0:
             done |= strike_mask & (self.progress_buf >= self.strike_episode_length)
         if not hasattr(self, 'sword_hit_list'):
             return done
-        learner_hit = self.sword_hit_list[0].squeeze(-1).bool()   # agent 0 hit opponent
         got_hit = self.sword_hit_list[1].squeeze(-1).bool()       # opponent hit agent 0
-        lunge_mask = (self.drill_ids == D_LUNGE_UPPER) | (self.drill_ids == D_LUNGE_GROIN)
         dodge_mask = self.drill_ids == D_DODGE
-        return done | (lunge_mask & learner_hit) | (dodge_mask & got_hit)
+        done = done | (dodge_mask & got_hit)
+        # v4-and-earlier behavior: end the lunge episode immediately on the learner's hit.
+        # (v5 two-phase keeps it running into the recovery phase instead.)
+        if not self.lunge_two_phase:
+            learner_hit = self.sword_hit_list[0].squeeze(-1).bool()
+            lunge_mask = (self.drill_ids == D_LUNGE_UPPER) | (self.drill_ids == D_LUNGE_GROIN)
+            done = done | (lunge_mask & learner_hit)
+        return done
 
     def _compute_reset(self):
         # drills have no win conditions — only out-of-bounds, falls, and decisive hits

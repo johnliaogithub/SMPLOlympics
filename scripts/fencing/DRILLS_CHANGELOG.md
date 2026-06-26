@@ -3,9 +3,43 @@
 Research log of the drill-conditioned low-level policy (`HumanoidFencingDrillsZ`).
 Newest version on top. Append a new section per trained version.
 
+NOTE on reproducibility: code was iterated in the working tree without a commit per
+version, so exact v1-v4 reward code is NOT bit-recoverable from git — these notes are
+the human record. Going forward: commit + tag per version, and behavior changes are
+config flags (logged to W&B) rather than code replacements. See v5.
+
 ---
 
-## v4 — current
+## v5 — current
+
+**Lunge-isolated diagnostic** (separate experiment dir `fencing_lunge_only`, phase `L`,
+`drill_probs=[0,0,0,1,1,0,0,0]`). Run to answer: is the lunge a reward problem or a
+PULSE action-space limit? Iterations and findings:
+
+- **Posture is reachable in PULSE.** With `+env.lunge_posture_weight=1.0`, the agent
+  kept a straight back. => the upright lunge is NOT off-manifold; remaining issues are
+  reward-shapeable. (`lunge_posture_weight` is now a config knob, default 0.20.)
+- **Explosiveness term added.** Nothing rewarded strike SPEED, so the lunge was a slow
+  reach/topple. Added `+0.30·explosive`: fast sword-tip speed toward the target, gated
+  by `exp(-1.5·dist)` so it's the committed strike, not a wave from afar. Rebalanced
+  lunge: `0.40·approach + 0.30·explosive + 0.15·thrust_align·gate + 0.10·aim +
+  lunge_posture_weight·posture + 5.0·hit − 0.20`.
+- **Two-phase lunge (recovery).** Observed: the agent reaches with the HAND, not a
+  foot-forward lunge, and topples in. Fix: `lunge_two_phase=True` (default) — the
+  episode no longer ends on the hit; it latches `_lunge_landed` and switches that env
+  to a recovery reward `0.5·still + 0.3·posture + 0.2·facing` (return to balanced
+  en-garde). A hand-reach-and-topple cannot recover, so requiring recovery pressures
+  the agent into a real lunge stance. Episode ends on `strike_episode_length` timeout
+  (use ~90 to fit lunge + recovery) or a fall.
+
+**Reproducibility:** set `+env.lunge_two_phase=False` to recover the v4-and-earlier
+behavior (lunge episode ends immediately on the hit). The flag is logged in W&B config.
+
+**Outcome:** _(fill in after training)_
+
+---
+
+## v4
 
 **Motivation:** v3 collapsed to standing for all drills; the lunge walked-and-hovered
 instead of thrusting.
