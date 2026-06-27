@@ -54,9 +54,14 @@ class HumanoidFencingDrills(HumanoidFencing):
         self._upper_target_ids = self._build_key_body_ids_tensor(["Chest", "Neck", "Head"])
         self._groin_target_ids = self._build_key_body_ids_tensor(["Pelvis"])
         self._right_foot_id = self._build_key_body_ids_tensor(["R_Ankle"])  # front/lunging foot
+        self._left_foot_id = self._build_key_body_ids_tensor(["L_Ankle"])   # rear/planted foot
         # Pelvis->Chest vector is the "spine" direction, used for the upright posture term.
         self._pelvis_id = self._build_key_body_ids_tensor(["Pelvis"])
         self._chest_id = self._build_key_body_ids_tensor(["Chest"])
+        # Where the rear foot started this episode (anchor) — penalize it sliding away
+        # so the agent plants it and lunges with the other foot instead of crouch-shuffling.
+        self._left_foot_anchor_list = [torch.zeros([self.num_envs, 2], device=self.device)
+                                       for _ in range(self.num_agents)]
 
         # Per-env drill assignment. Agent 0 = learner drill, agent 1 = opponent drill.
         self.drill_ids = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
@@ -165,6 +170,7 @@ class HumanoidFencingDrills(HumanoidFencing):
                 self._prev_head_pos_list[i][env_ids] = self._rigid_body_pos_list[i][env_ids, self._head_id[0]]
                 self._prev_sword_tip_list[i][env_ids] = tips[i][env_ids, 0]
                 self._prev_foot_pos_list[i][env_ids] = self._rigid_body_pos_list[i][env_ids, self._right_foot_id[0]]
+                self._left_foot_anchor_list[i][env_ids] = self._rigid_body_pos_list[i][env_ids, self._left_foot_id[0], 0:2]
                 # Invalidate the thrust line; it is (re)captured at step sword_ref_step.
                 # While zero, thrust_align_r = dot(dir, 0) = 0 (no thrust reward yet).
                 self._sword_dir_0_list[i][env_ids] = 0.0
@@ -305,13 +311,21 @@ class HumanoidFencingDrills(HumanoidFencing):
             tip_speed_to_tgt = torch.clamp_min(
                 torch.sum(tip_vel * F.normalize(nearest - tip, dim=-1), dim=-1), 0.0)
             explosive_r = torch.clamp(tip_speed_to_tgt / 3.0, 0.0, 1.0) * torch.exp(-1.5 * dist)
+            # PENALIZE the rear (left) foot sliding from where it started: a lunge plants
+            # the back foot and drives the FRONT foot forward. As a penalty (not a reward)
+            # it can't be farmed by standing (drift=0 => 0 penalty); it only bites when the
+            # agent crouch-shuffles both feet. Forces a planted-back-foot lunge stance.
+            left_foot_xy = self._rigid_body_pos_list[i][:, self._left_foot_id[0], 0:2]
+            foot_drift = torch.linalg.norm(left_foot_xy - self._left_foot_anchor_list[i], dim=-1)
+            rear_foot_pen = 0.30 * (1.0 - torch.exp(-5.0 * foot_drift))   # 0 planted .. 0.30 slid
             return (0.40 * approach_r
                     + 0.30 * explosive_r
                     + 0.15 * thrust_align_r * close_gate
                     + 0.10 * aim_r
                     + self.lunge_posture_weight * posture_r
                     + 5.0 * hit_r
-                    - 0.20)
+                    - 0.20
+                    - rear_foot_pen)
 
         # Two-phase lunge: before the hit lands -> strike reward; after -> recovery
         # (return to a balanced upright stand). Only a real foot-forward lunge can

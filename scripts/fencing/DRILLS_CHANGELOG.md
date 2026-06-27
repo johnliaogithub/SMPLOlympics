@@ -32,8 +32,23 @@ PULSE action-space limit? Iterations and findings:
   the agent into a real lunge stance. Episode ends on `strike_episode_length` timeout
   (use ~90 to fit lunge + recovery) or a fall.
 
+- **Rear-foot pin.** Observed: with `lunge_posture_weight=1.0` it reaches+crouches
+  (straight back, but no lunge step) — too close (1.75 m) to need a step, and posture
+  at 1.0 over-rewards staying upright. Fixes:
+  - Rear (left) foot PENALTY: `−0.30·(1 − exp(−5·foot_drift))`, drift from the foot's
+    episode-start anchor. A penalty (not reward) so it can't be farmed by standing;
+    it only bites on crouch-shuffle. Plants the back foot => front-foot lunge stance.
+    (`L_Ankle`; flip to `R_Ankle` if the agent leads with the left foot.)
+  - Training config (vs the `=1.0` diagnostic): `strike_spawn_half_dist=1.0` (2.0 m,
+    so a stationary reach can't connect — must step) and `lunge_posture_weight=0.30`
+    (upright still pays but doesn't dominate the time penalty / become a stand-farm).
+
 **Reproducibility:** set `+env.lunge_two_phase=False` to recover the v4-and-earlier
 behavior (lunge episode ends immediately on the hit). The flag is logged in W&B config.
+
+**Training command:** `bash scripts/fencing/train_fencing_drills.sh L
+learning.params.config.max_epochs=<cur+10000> +env.strike_spawn_half_dist=1.0
++env.strike_episode_length=90 +env.lunge_posture_weight=0.30`
 
 **Outcome:** _(fill in after training)_
 
