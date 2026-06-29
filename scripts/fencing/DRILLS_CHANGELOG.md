@@ -43,6 +43,16 @@ PULSE action-space limit? Iterations and findings:
     so a stationary reach can't connect — must step) and `lunge_posture_weight=0.30`
     (upright still pays but doesn't dominate the time penalty / become a stand-farm).
 
+- **Low-sword penalty.** With the foot pin + 2 m spawn, the agent learned to plant the
+  sword as a "third leg" support strut to lean in. Penalty `−0.40·clamp((0.5 − tip_z)/0.5)`
+  — bites only when the tip drops below 0.5 m (a ground-prop; pelvis target is ~0.9 m so
+  a real groin thrust is unaffected). A penalty, so no new farm.
+- **Foot SPLIT (replaces the rear-pin + front-forward pair).** The agent was leading with
+  the LEFT foot (backwards for a right-arm lunge). Replaced both foot terms with one:
+  `lunge_split_weight·clamp((right_foot − left_foot)·tar_dir / 0.7, −1, 1)` — positive when
+  the right foot is ahead (correct stance), negative when the left is. Default weight 0.40.
+  Net simplification: removed `_left_foot_anchor_list` + `_prev_foot_pos_list` tracking.
+
 **Reproducibility:** set `+env.lunge_two_phase=False` to recover the v4-and-earlier
 behavior (lunge episode ends immediately on the hit). The flag is logged in W&B config.
 
