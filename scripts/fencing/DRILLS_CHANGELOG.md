@@ -49,9 +49,18 @@ PULSE action-space limit? Iterations and findings:
   a real groin thrust is unaffected). A penalty, so no new farm.
 - **Foot SPLIT (replaces the rear-pin + front-forward pair).** The agent was leading with
   the LEFT foot (backwards for a right-arm lunge). Replaced both foot terms with one:
-  `lunge_split_weight·clamp((right_foot − left_foot)·tar_dir / 0.7, −1, 1)` — positive when
-  the right foot is ahead (correct stance), negative when the left is. Default weight 0.40.
-  Net simplification: removed `_left_foot_anchor_list` + `_prev_foot_pos_list` tracking.
+  `split·clamp((right_foot − left_foot)·tar_dir / 0.7, −1, 1)` — positive when the right
+  foot is ahead (correct stance), negative when the left is. Net simplification: removed
+  `_left_foot_anchor_list` + `_prev_foot_pos_list` tracking. **Result: a real lunge motion.**
+- **Config consolidation.** All lunge reward weights now live in one dict
+  `DEFAULT_LUNGE_WEIGHTS` (approach/explosive/thrust_align/aim/posture/split/hit/time/
+  low_sword). Override a subset from the CLI: `+env.lunge_weights="{posture:0.3,split:0.5}"`.
+  Replaces the scattered `lunge_posture_weight` / `lunge_split_weight` flags. The whole
+  weight set is logged to W&B config as one object.
+
+**Training command (post-consolidation):** `bash scripts/fencing/train_fencing_drills.sh L
+learning.params.config.max_epochs=<cur+10000> +env.strike_spawn_half_dist=1.0
++env.strike_episode_length=90 +env.lunge_weights="{posture:0.30}"`
 
 **Reproducibility:** set `+env.lunge_two_phase=False` to recover the v4-and-earlier
 behavior (lunge episode ends immediately on the hit). The flag is logged in W&B config.

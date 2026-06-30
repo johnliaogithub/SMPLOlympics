@@ -42,6 +42,21 @@ NUM_DRILLS = len(DRILL_NAMES)
 (D_ADVANCE, D_RETREAT, D_STAND, D_LUNGE_UPPER, D_LUNGE_GROIN, D_DODGE,
  D_STEP_LEFT, D_STEP_RIGHT) = range(NUM_DRILLS)
 
+# All lunge reward weights in one place. Override any subset from the CLI, e.g.
+#   +env.lunge_weights="{posture:0.3,split:0.5}"
+# (unspecified keys keep these defaults). 'time'/'low_sword' are subtracted (penalties).
+DEFAULT_LUNGE_WEIGHTS = {
+    "approach": 0.40,    # potential-based tip->target progress
+    "explosive": 0.30,   # fast tip speed toward target (gated near target)
+    "thrust_align": 0.15,# blade stays on the captured thrust line (gated to closing)
+    "aim": 0.10,         # point the blade at the target (first sword_ref_step steps)
+    "posture": 0.20,     # upright spine (anti-hunch)
+    "split": 0.40,       # right foot ahead of left (correct lunge stance)
+    "hit": 5.0,          # terminal: land the strike (force-scaled)
+    "time": 0.20,        # PENALTY per step (urgency / explosiveness)
+    "low_sword": 0.40,   # PENALTY scale for the tip dropping below 0.5 m (anti strut-hack)
+}
+
 
 class HumanoidFencingDrills(HumanoidFencing):
 
@@ -93,16 +108,10 @@ class HumanoidFencingDrills(HumanoidFencing):
         # 0.875 => 1.75 m apart, ~lunge range. Tune together with strike_episode_length:
         # closer spawn + shorter episode forces a pure lunge.
         self.strike_spawn_half_dist = cfg["env"].get("strike_spawn_half_dist", 0.875)
-        # Weight of the upright-posture term in the lunge. Crank it (e.g. 1.0) to test
-        # whether an UPRIGHT lunge is even reachable in the PULSE action space: if the
-        # agent still hunches with a huge posture reward, the upright lunge is likely
-        # off-manifold (an action-space limit, not a reward bug).
-        self.lunge_posture_weight = cfg["env"].get("lunge_posture_weight", 0.20)
-        # Lunge foot-split: reward the FRONT (right) foot being ahead of the rear (left)
-        # along the opponent direction — a right-arm lunge leads with the right foot.
-        # Replaces the old rear-foot-pin + front-foot-forward pair (one term, no anchors).
-        # Set 0 to disable.
-        self.lunge_split_weight = cfg["env"].get("lunge_split_weight", 0.40)
+        # All lunge reward weights in one dict (see DEFAULT_LUNGE_WEIGHTS). Override a
+        # subset via +env.lunge_weights="{posture:0.3,split:0.5}"; unspecified keys keep
+        # their defaults. Replaces the old per-weight flags (lunge_posture_weight, etc.).
+        self.lunge_w = {**DEFAULT_LUNGE_WEIGHTS, **cfg["env"].get("lunge_weights", {})}
         # Two-phase lunge (v5+): episode does NOT end on the lunge hit; it switches to a
         # recovery/stand reward. Set False to reproduce v4-and-earlier behavior where the
         # lunge episode ended immediately on the hit. Logged to W&B config per run.
@@ -255,7 +264,7 @@ class HumanoidFencingDrills(HumanoidFencing):
         # PENALIZE the sword tip dropping low ("sword as a third leg" support strut).
         # Below ~0.5 m the tip is clearly a ground-prop, not even a groin thrust
         # (pelvis ~0.9 m), so this never fights a real lunge but kills the strut hack.
-        low_sword_pen = 0.40 * torch.clamp((0.5 - tip[:, 2]) / 0.5, 0.0, 1.0)
+        low_sword_pen = self.lunge_w["low_sword"] * torch.clamp((0.5 - tip[:, 2]) / 0.5, 0.0, 1.0)
 
         # FOOT SPLIT: how far the front (right) foot is ahead of the rear (left) foot
         # along the opponent direction. Positive = right ahead (correct right-arm lunge
@@ -319,14 +328,15 @@ class HumanoidFencingDrills(HumanoidFencing):
             tip_speed_to_tgt = torch.clamp_min(
                 torch.sum(tip_vel * F.normalize(nearest - tip, dim=-1), dim=-1), 0.0)
             explosive_r = torch.clamp(tip_speed_to_tgt / 3.0, 0.0, 1.0) * torch.exp(-1.5 * dist)
-            return (0.40 * approach_r
-                    + 0.30 * explosive_r
-                    + 0.15 * thrust_align_r * close_gate
-                    + 0.10 * aim_r
-                    + self.lunge_posture_weight * posture_r
-                    + self.lunge_split_weight * split_r   # right foot ahead of left
-                    + 5.0 * hit_r
-                    - 0.20
+            w = self.lunge_w
+            return (w["approach"] * approach_r
+                    + w["explosive"] * explosive_r
+                    + w["thrust_align"] * thrust_align_r * close_gate
+                    + w["aim"] * aim_r
+                    + w["posture"] * posture_r
+                    + w["split"] * split_r          # right foot ahead of left
+                    + w["hit"] * hit_r
+                    - w["time"]
                     - low_sword_pen)
 
         # Two-phase lunge: before the hit lands -> strike reward; after -> recovery
