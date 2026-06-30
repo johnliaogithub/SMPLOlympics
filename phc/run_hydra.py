@@ -343,13 +343,8 @@ def main(cfg_hydra: DictConfig) -> None:
             id=cfg.resume_str,
             notes=cfg.get("notes", "no notes"),
         )
-        try:
-            _repo = osp.dirname(osp.dirname(osp.abspath(__file__)))   # repo root (phc/..)
-            cfg["git_hash"] = os.popen(f"git -C {_repo} rev-parse HEAD").read().strip() or "unknown"
-            # git_dirty=True => the run had uncommitted edits, so git_hash is only approximate.
-            cfg["git_dirty"] = bool(os.popen(f"git -C {_repo} status --porcelain").read().strip())
-        except Exception:
-            cfg["git_hash"], cfg["git_dirty"] = "unknown", False
+        # (git commit + dirty diff are captured automatically by wandb in
+        # wandb-metadata.json / diff.patch, so we don't duplicate them into the config.)
         wandb.config.update(cfg, allow_val_change=True)
         wandb.run.name = cfg.exp_name
         # wandb.run.save()
