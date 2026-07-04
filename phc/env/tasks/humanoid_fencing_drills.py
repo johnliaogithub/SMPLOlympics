@@ -249,9 +249,7 @@ class HumanoidFencingDrills(HumanoidFencing):
         # standing still
         still_r = torch.exp(-2.0 * torch.linalg.norm(root_vel, dim=-1))
 
-        # posture: keep the torso upright. spine = pelvis->chest; its z-component is
-        # 1.0 when the spine is vertical, dropping as the torso bends over. Applied
-        # (small) to every drill so the agent stops folding forward and toppling.
+        # POSTURE: want to maximize, max is 1.0
         pelvis_pos = self._rigid_body_pos_list[i][:, self._pelvis_id[0]]
         chest_pos = self._rigid_body_pos_list[i][:, self._chest_id[0]]
         spine_up = F.normalize(chest_pos - pelvis_pos, dim=-1)
@@ -261,15 +259,10 @@ class HumanoidFencingDrills(HumanoidFencing):
         tip = sword_tip_pos_list[i][:, 0]                  # (N, 3)
         opp_body_pos = self._rigid_body_pos_list[1 - i]
 
-        # PENALIZE the sword tip dropping low ("sword as a third leg" support strut).
-        # Below ~0.5 m the tip is clearly a ground-prop, not even a groin thrust
-        # (pelvis ~0.9 m), so this never fights a real lunge but kills the strut hack.
+        # LOW SWORD: penalize the sword tip below 0.5m (as a third leg)
         low_sword_pen = self.lunge_w["low_sword"] * torch.clamp((0.5 - tip[:, 2]) / 0.5, 0.0, 1.0)
 
-        # FOOT SPLIT: how far the front (right) foot is ahead of the rear (left) foot
-        # along the opponent direction. Positive = right ahead (correct right-arm lunge
-        # stance); negative = left ahead (the backwards stance we were getting). One term
-        # that both pins the rear foot and drives the front foot — no anchors, no pair.
+        # FOOT SPLIT: how much the front (right) foot is ahead of the rear (left) foot
         rf_xy = self._rigid_body_pos_list[i][:, self._right_foot_id[0], 0:2]
         lf_xy = self._rigid_body_pos_list[i][:, self._left_foot_id[0], 0:2]
         split_r = torch.clamp(torch.sum((rf_xy - lf_xy) * tar_dir, dim=-1) / 0.7, -1.0, 1.0)

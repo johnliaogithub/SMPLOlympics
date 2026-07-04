@@ -38,7 +38,7 @@ fi
 # Lunge-only diagnostic gets its OWN experiment dir so it never touches v4.
 case "$PHASE" in
   L|l) EXP_NAME=fencing_lunge_only ;;
-  *)   EXP_NAME=fencing_drills_v4 ;;
+  *)   EXP_NAME=fencing_drills_v6 ;;
 esac
 OUTPUT_DIR=output/HumanoidIm/${EXP_NAME}
 
@@ -100,7 +100,9 @@ python phc/run_hydra.py \
     env.motion_file=./sample_data/amass_isaac_standing_upright_slim.pkl \
     headless=True \
     env.episode_length=175 \
-    +env.strike_episode_length=50 \
+    +env.strike_episode_length=90 \
+    +env.strike_spawn_half_dist=1.0 \
+    '+env.lunge_weights={posture:0.30}' \
     learning.params.config.switch_frequency=1000000000 \
     learning.params.config.task_reward_w=1.0 \
     learning.params.config.disc_reward_w=0.0 \

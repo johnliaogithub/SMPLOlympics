@@ -10,7 +10,31 @@ config flags (logged to W&B) rather than code replacements. See v5.
 
 ---
 
-## v5 — current
+## v6 — current: reintegration (full 8-drill set)
+
+**Motivation:** the isolated lunge (v5) proved the motion is achievable. v6 puts the
+v5 lunge reward back into the SHARED multi-drill policy to (a) confirm the lunge fixes
+hold when the net also serves locomotion, and (b) test the real research question —
+do the drills COMPOSE into fencing under the strategy net?
+
+- Same reward code as v5-final (lunge reward: approach/explosive/thrust_align/aim/
+  posture/split/hit/time/low_sword, two-phase recovery). No reward changes — only the
+  drill distribution differs (full set vs lunge-only).
+- New experiment dir `fencing_drills_v6` (v4/v5 checkpoints untouched).
+- Phasing: `fresh` (phase A, no dodge) → `B` (add dodge, once lunge is a real threat).
+- Per-drill strike settings carried over: `strike_spawn_half_dist=1.0`,
+  `strike_episode_length=90`, `lunge_weights={posture:0.30}` (these only affect the
+  lunge/dodge envs; locomotion drills use the global 1.5 spawn / 175-step episode).
+
+**Watch:** reward-scale mismatch — the lunge's terminal +5 / two-phase dynamics share a
+PPO batch with the smooth ~1/step locomotion drills; if locomotion degrades when lunge
+is present, that's the cause (fix: per-drill advantage norm or reward rescale).
+
+**Outcome:** _(fill in after training)_
+
+---
+
+## v5
 
 **Lunge-isolated diagnostic** (separate experiment dir `fencing_lunge_only`, phase `L`,
 `drill_probs=[0,0,0,1,1,0,0,0]`). Run to answer: is the lunge a reward problem or a
