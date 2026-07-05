@@ -29,7 +29,8 @@ python phc/visualize_drills.py \
     headless=True \
     +record_video=True \
     env.episode_length=175 \
-    +env.strike_episode_length=50 \
+    +env.strike_episode_length=90 \
+    +env.strike_spawn_half_dist=1.0 \
     "+env.low_level_checkpoint=${LOW_LEVEL}" \
     +env.clip_len=120 \
     "$@"
