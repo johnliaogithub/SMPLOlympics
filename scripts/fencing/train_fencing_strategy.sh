@@ -11,6 +11,15 @@
 export LD_LIBRARY_PATH=/pub0/johnliao/miniconda3/envs/isaac/lib:$LD_LIBRARY_PATH
 cd /pub0/johnliao/SMPLOlympics
 
+# Shared box: auto-pick the GPU with the most free memory (override by setting
+# CUDA_VISIBLE_DEVICES yourself before calling this script).
+if [[ -z "$CUDA_VISIBLE_DEVICES" ]]; then
+    export CUDA_DEVICE_ORDER=PCI_BUS_ID
+    export CUDA_VISIBLE_DEVICES=$(nvidia-smi --query-gpu=index,memory.free \
+        --format=csv,noheader,nounits | sort -t, -k2 -nr | head -1 | cut -d, -f1 | tr -d ' ')
+    echo "[GPU] auto-selected GPU ${CUDA_VISIBLE_DEVICES} (most free memory)"
+fi
+
 LOW_LEVEL="${1:-output/HumanoidIm/fencing_drills_v6/Humanoid.pth}"
 if [[ -f "$LOW_LEVEL" ]] || [[ "$LOW_LEVEL" == output/* ]]; then
     shift 2>/dev/null
