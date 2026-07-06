@@ -11,11 +11,11 @@
 export LD_LIBRARY_PATH=/pub0/johnliao/miniconda3/envs/isaac/lib:$LD_LIBRARY_PATH
 cd /pub0/johnliao/SMPLOlympics
 
-LOW_LEVEL="${1:-output/HumanoidIm/fencing_drills_v1/Humanoid.pth}"
+LOW_LEVEL="${1:-output/HumanoidIm/fencing_drills_v6/Humanoid.pth}"
 if [[ -f "$LOW_LEVEL" ]] || [[ "$LOW_LEVEL" == output/* ]]; then
     shift 2>/dev/null
 else
-    LOW_LEVEL="output/HumanoidIm/fencing_drills_v1/Humanoid.pth"
+    LOW_LEVEL="output/HumanoidIm/fencing_drills_v6/Humanoid.pth"
 fi
 
 echo "[Strategy] low-level policy: ${LOW_LEVEL}"
