@@ -41,6 +41,11 @@ class HumanoidFencingStrategy(HumanoidFencingDrills):
         # Filled in by the training script before rollouts begin.
         self.low_level_policy = None
         self.macro_K = cfg["env"].get("macro_K", 15)
+        # Penalty for the two fencers' BODIES overlapping (walking into each other):
+        # subtracted from the sparse reward, summed per physics step over the macro
+        # window, when the horizontal root gap drops below contact_pen_dist.
+        self.contact_pen_w = cfg["env"].get("contact_pen_w", 0.05)
+        self.contact_pen_dist = cfg["env"].get("contact_pen_dist", 0.6)
 
     def _compute_reward(self, actions):
         # Dense fencing reward (original formulation) for logging/comparison only.
@@ -95,6 +100,7 @@ class HumanoidFencingStrategyZ(HumanoidFencingStrategy):
 
         sparse = torch.zeros(N, device=self.device)
         dense = torch.zeros(N, device=self.device)
+        contact_pen = torch.zeros(N, device=self.device)
         done = torch.zeros(N, dtype=torch.bool, device=self.device)
 
         for _ in range(self.macro_K):
@@ -111,6 +117,12 @@ class HumanoidFencingStrategyZ(HumanoidFencingStrategy):
             outcome = self.green_win.float() - self.red_win.float()  # +1 / -1 / 0(timeout|oob)
             sparse = torch.where(newly, outcome, sparse)
             dense = dense + self.rew_buf[:N] * (~done).float()
+
+            # penalize the two fencers walking into each other: horizontal root gap
+            # below contact_pen_dist accrues a penalty (only while the match is live).
+            gap = torch.linalg.norm(self._humanoid_root_states_list[0][..., 0:2]
+                                    - self._humanoid_root_states_list[1][..., 0:2], dim=-1)
+            contact_pen = contact_pen + torch.clamp_min(self.contact_pen_dist - gap, 0.0) * (~done).float()
             done = done | step_done
 
-        return sparse, dense, done
+        return sparse - self.contact_pen_w * contact_pen, dense, done
