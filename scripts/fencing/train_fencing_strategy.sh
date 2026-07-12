@@ -20,11 +20,11 @@ if [[ -z "$CUDA_VISIBLE_DEVICES" ]]; then
     echo "[GPU] auto-selected GPU ${CUDA_VISIBLE_DEVICES} (most free memory)"
 fi
 
-LOW_LEVEL="${1:-output/HumanoidIm/fencing_drills_v6/Humanoid.pth}"
+LOW_LEVEL="${1:-output/HumanoidIm/fencing_drills_v7/Humanoid.pth}"
 if [[ -f "$LOW_LEVEL" ]] || [[ "$LOW_LEVEL" == output/* ]]; then
     shift 2>/dev/null
 else
-    LOW_LEVEL="output/HumanoidIm/fencing_drills_v6/Humanoid.pth"
+    LOW_LEVEL="output/HumanoidIm/fencing_drills_v7/Humanoid.pth"
 fi
 
 echo "[Strategy] low-level policy: ${LOW_LEVEL}"
@@ -33,7 +33,7 @@ python phc/train_fencing_strategy.py \
     project_name=SMPLOlympics \
     num_agents=2 \
     learning=amp_z_self_play_no_disc \
-    exp_name=fencing_strategy_v1 \
+    exp_name=fencing_strategy_v2 \
     env=env_amp_z \
     env.num_envs=256 \
     env.task=HumanoidFencingStrategyZ \
