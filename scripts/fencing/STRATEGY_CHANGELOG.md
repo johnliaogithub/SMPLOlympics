@@ -43,4 +43,17 @@ logged (`strategy/dense_return`) for comparison only; it never enters the gradie
 **Command:** `bash scripts/fencing/train_fencing_strategy.sh
 output/HumanoidIm/fencing_drills_v6/Humanoid.pth +strategy.iters=10000`
 
-**Outcome:** _(fill in after training)_
+**DEPENDENCY (pinned):** built on `drills-v6` **phase A — NO dodge**, low-level
+checkpoint `output/HumanoidIm/fencing_drills_v6/Humanoid.pth` (v6 trained to ~40000
+epochs). `fencing_drills_v6/` is frozen; the dodge-added model is a SEPARATE version
+(`drills-v7`) so this dependency stays unambiguous. Also pinned in the run's W&B config
+(`low_level_checkpoint`).
+
+**Outcome:** win_rate rose to ~0.21 then collapsed to ~0.05 and plateaued — the classic
+sparse-self-play PASSIVE equilibrium (both fencers learn to *not lose* → mutual standoff,
+mostly timeouts). Two contributing gaps identified: (1) pure sparse win/loss gives no
+gradient toward aggression; (2) falls are neither penalized nor terminal, so a downed
+fencer is hard to touch — "fall to avoid losing" is a safe outcome. Planned fixes for
+strategy-v2: mix a small dense reward into the sparse objective, and make a fall
+end-the-bout-with-a-penalty. Also: strategy-v1 ran WITHOUT dodge (forgot phase B), so it
+was offense-only.

@@ -38,7 +38,7 @@ fi
 # Lunge-only diagnostic gets its OWN experiment dir so it never touches v4.
 case "$PHASE" in
   L|l) EXP_NAME=fencing_lunge_only ;;
-  *)   EXP_NAME=fencing_drills_v6 ;;
+  *)   EXP_NAME=fencing_drills_v7 ;;
 esac
 OUTPUT_DIR=output/HumanoidIm/${EXP_NAME}
 

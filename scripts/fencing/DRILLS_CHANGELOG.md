@@ -10,7 +10,29 @@ config flags (logged to W&B) rather than code replacements. See v5.
 
 ---
 
-## v6 — current: reintegration (full 8-drill set)
+## v7 — current: add dodge (warm-started from v6)
+
+**Motivation:** v6 was trained phase A (no dodge) — `strategy-v1` was accidentally run on
+it, so it was offense-only. v7 adds dodge WITHOUT touching v6 (which `strategy-v1` depends
+on) by warm-starting a new experiment dir from v6's weights and training phase B.
+
+- **New experiment dir `fencing_drills_v7`**, seeded by copying all of
+  `fencing_drills_v6/*.pth` into it (v6 trained to ~epoch 40000). Training resumes from
+  epoch 40000 and adds dodge (phase B). `fencing_drills_v6/` is left FROZEN as
+  `strategy-v1`'s pinned dependency.
+- **Same code as v6** (reward/env already support dodge). This is a checkpoint/model
+  version, not a code version — reuses the `drills-v6` git tag; only the training config
+  (phase B + warm-start) differs. Dodge can now learn against v6's competent lunge.
+
+**Command:** `bash scripts/fencing/train_fencing_drills.sh B
+learning.params.config.max_epochs=50000`  (phase B = all 8 drills incl dodge; resumes
+from the copied epoch-40000 checkpoint, so max_epochs must exceed 40000).
+
+**Outcome:** _(fill in after training)_
+
+---
+
+## v6: reintegration (full 8-drill set)
 
 **Motivation:** the isolated lunge (v5) proved the motion is achievable. v6 puts the
 v5 lunge reward back into the SHARED multi-drill policy to (a) confirm the lunge fixes

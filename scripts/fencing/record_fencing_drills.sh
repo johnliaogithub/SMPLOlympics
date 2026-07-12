@@ -9,7 +9,7 @@
 export LD_LIBRARY_PATH=/pub0/johnliao/miniconda3/envs/isaac/lib:$LD_LIBRARY_PATH
 cd /pub0/johnliao/SMPLOlympics
 
-LOW_LEVEL="${1:-output/HumanoidIm/fencing_drills_v6/Humanoid.pth}"
+LOW_LEVEL="${1:-output/HumanoidIm/fencing_drills_v7/Humanoid.pth}"
 [[ $# -gt 0 ]] && shift   # consume the checkpoint arg so it isn't re-passed to hydra via "$@"
 echo "[viz] low-level policy: ${LOW_LEVEL}"
 
