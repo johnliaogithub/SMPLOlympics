@@ -114,10 +114,28 @@ def train(cfg, task, env):
     ent_coef = sp.get("entropy_coef", 0.01)
     vf_coef = sp.get("value_coef", 0.5)
     save_every = sp.get("save_every", 500)
+    dense_mix = sp.get("dense_mix", 0.0)      # weight on the dense fencing reward
+                                              # mixed into the PPO objective (0 = pure sparse)
     out_dir = cfg.output_path
 
     net = StrategyNet(obs_dim, NUM_DRILLS, sp.get("hidden", 512)).to(device)
     opt = torch.optim.Adam(net.parameters(), lr=lr)
+
+    # Optional resume: sp.resume=True -> auto strategy.pth in out_dir; or a path.
+    # Restores net + optimizer + iter so a crashed multi-day run isn't lost.
+    start_iter = 0
+    resume = sp.get("resume", False)
+    if resume:
+        resume_path = resume if isinstance(resume, str) else os.path.join(out_dir, "strategy.pth")
+        if os.path.isfile(resume_path):
+            ckpt = torch.load(resume_path, map_location=device)
+            net.load_state_dict(ckpt["strategy_net"])
+            if "optimizer" in ckpt:
+                opt.load_state_dict(ckpt["optimizer"])
+            start_iter = ckpt.get("iter", 0)
+            print(f"[Strategy] resumed from {resume_path} at iter {start_iter}")
+        else:
+            print(f"[Strategy] resume requested but {resume_path} not found; starting fresh")
 
     def get_self_obs():
         return torch.clamp(task.obs_buf[:N].detach(), -5.0, 5.0)
@@ -127,7 +145,7 @@ def train(cfg, task, env):
 
     env.reset()  # populate obs_buf
 
-    for it in range(total_iters):
+    for it in range(start_iter, total_iters):
         obs_b = torch.zeros(T, N, obs_dim, device=device)
         act_b = torch.zeros(T, N, dtype=torch.long, device=device)
         logp_b = torch.zeros(T, N, device=device)
@@ -136,6 +154,7 @@ def train(cfg, task, env):
         done_b = torch.zeros(T, N, device=device)
 
         ep_dense = torch.zeros(N, device=device)
+        ep_contact = torch.zeros(N, device=device)
         win_count = loss_count = end_count = 0
         drill_hist = torch.zeros(NUM_DRILLS, device=device)
 
@@ -150,15 +169,18 @@ def train(cfg, task, env):
                 opp_logits, _ = net(get_opp_obs())
                 opp_action = torch.distributions.Categorical(logits=opp_logits).sample()
 
-            sparse, dense, done = task.macro_step(action, opp_action)
+            shaped, dense, done = task.macro_step(action, opp_action)
 
             obs_b[t], act_b[t], logp_b[t], val_b[t] = obs_self, action, logp.detach(), value.detach()
-            rew_b[t], done_b[t] = sparse, done.float()
+            # PPO reward = (win/loss - contact penalty) + dense_mix * dense fencing reward.
+            rew_b[t], done_b[t] = shaped + dense_mix * dense, done.float()
 
             ep_dense += dense
+            ep_contact += task._last_contact_pen
             drill_hist += torch.bincount(action, minlength=NUM_DRILLS).float()
-            win_count += (sparse > 0).sum().item()
-            loss_count += (sparse < 0).sum().item()
+            # count wins/losses from the penalty-free outcome, not the shaped reward
+            win_count += (task._last_outcome > 0).sum().item()
+            loss_count += (task._last_outcome < 0).sum().item()
             end_count += done.sum().item()
 
         # bootstrap value of the final state
@@ -212,6 +234,8 @@ def train(cfg, task, env):
                 "strategy/episodes_ended": end_count,
                 "strategy/policy_entropy": ent.item(),
                 "strategy/value_loss": v_loss.item(),
+                "strategy/contact_penalty": ep_contact.mean().item(),
+                "strategy/dense_mix_w": dense_mix,
             }
             dh = drill_hist / drill_hist.sum().clamp_min(1)
             for d, name in enumerate(DRILL_NAMES):
@@ -224,10 +248,10 @@ def train(cfg, task, env):
 
         if it > 0 and it % save_every == 0:
             os.makedirs(out_dir, exist_ok=True)
-            torch.save({"strategy_net": net.state_dict(), "iter": it},
-                       os.path.join(out_dir, f"strategy_{it:08d}.pth"))
-            torch.save({"strategy_net": net.state_dict(), "iter": it},
-                       os.path.join(out_dir, "strategy.pth"))
+            snapshot = {"strategy_net": net.state_dict(),
+                        "optimizer": opt.state_dict(), "iter": it}
+            torch.save(snapshot, os.path.join(out_dir, f"strategy_{it:08d}.pth"))
+            torch.save(snapshot, os.path.join(out_dir, "strategy.pth"))
 
 
 @hydra.main(version_base=None, config_path="../phc/data/cfg", config_name="config")

@@ -11,6 +11,10 @@
 export LD_LIBRARY_PATH=/pub0/johnliao/miniconda3/envs/isaac/lib:$LD_LIBRARY_PATH
 cd /pub0/johnliao/SMPLOlympics
 
+# smpl_local_robot writes the generated humanoid XML here; a tmp-cleaner can wipe
+# it between runs, which crashes env creation with a FileNotFoundError. Recreate it.
+mkdir -p /tmp/j73liao
+
 # Shared box: auto-pick the GPU with the most free memory (override by setting
 # CUDA_VISIBLE_DEVICES yourself before calling this script).
 if [[ -z "$CUDA_VISIBLE_DEVICES" ]]; then
@@ -33,7 +37,7 @@ python phc/train_fencing_strategy.py \
     project_name=SMPLOlympics \
     num_agents=2 \
     learning=amp_z_self_play_no_disc \
-    exp_name=fencing_strategy_v2 \
+    exp_name=fencing_strategy_v3 \
     env=env_amp_z \
     env.num_envs=256 \
     env.task=HumanoidFencingStrategyZ \
@@ -46,4 +50,5 @@ python phc/train_fencing_strategy.py \
     env.episode_length=175 \
     "+env.low_level_checkpoint=${LOW_LEVEL}" \
     +env.macro_K=15 \
+    +strategy.dense_mix=0.05 \
     "$@"

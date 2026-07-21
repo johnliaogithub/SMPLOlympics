@@ -125,4 +125,8 @@ class HumanoidFencingStrategyZ(HumanoidFencingStrategy):
             contact_pen = contact_pen + torch.clamp_min(self.contact_pen_dist - gap, 0.0) * (~done).float()
             done = done | step_done
 
+        # Stash penalty-free outcome and the raw contact penalty so the trainer can
+        # log win/loss (clean, +1/-1/0) and contact separately from the shaped reward.
+        self._last_outcome = sparse.clone()
+        self._last_contact_pen = contact_pen.clone()
         return sparse - self.contact_pen_w * contact_pen, dense, done

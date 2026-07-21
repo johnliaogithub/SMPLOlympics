@@ -3,10 +3,14 @@
 #
 # Usage:
 #   bash scripts/fencing/record_strategy.sh [strategy_checkpoint] [low_level_checkpoint]
-# Defaults: latest strategy.pth on drills-v6.
+# Defaults: latest strategy.pth on drills-v7.
 
 export LD_LIBRARY_PATH=/pub0/johnliao/miniconda3/envs/isaac/lib:$LD_LIBRARY_PATH
 cd /pub0/johnliao/SMPLOlympics
+
+# smpl_local_robot writes the generated humanoid XML here; a tmp-cleaner can wipe
+# it between runs, which crashes env creation with a FileNotFoundError. Recreate it.
+mkdir -p /tmp/j73liao
 
 # Shared box: auto-pick the freest GPU (override via CUDA_VISIBLE_DEVICES).
 if [[ -z "$CUDA_VISIBLE_DEVICES" ]]; then
@@ -15,8 +19,8 @@ if [[ -z "$CUDA_VISIBLE_DEVICES" ]]; then
         --format=csv,noheader,nounits | sort -t, -k2 -nr | head -1 | cut -d, -f1 | tr -d ' ')
 fi
 
-STRATEGY="${1:-output/HumanoidIm/fencing_strategy_v1/strategy.pth}"
-LOW_LEVEL="${2:-output/HumanoidIm/fencing_drills_v6/Humanoid.pth}"
+STRATEGY="${1:-output/HumanoidIm/fencing_strategy_v3/strategy.pth}"
+LOW_LEVEL="${2:-output/HumanoidIm/fencing_drills_v7/Humanoid.pth}"
 echo "[record] strategy: ${STRATEGY}"
 echo "[record] low-level: ${LOW_LEVEL}"
 
