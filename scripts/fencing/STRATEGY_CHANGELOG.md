@@ -8,7 +8,50 @@ Newest version on top.
 
 ---
 
-## strategy-v3 — current: contact penalty + dense-reward mix
+## strategy-v4 — current: body-contact TERMINATION (hard wall)
+
+**Built on:** `drills-v7`. Carries v3 (contact penalty + `dense_mix=0.05`); adds a hard
+terminal on body contact. Separate version because it changes the episode dynamics, not just
+a weight — v3 kept running (dense mix alone didn't stop the closing).
+
+**Motivation.** v3's soft contact penalty + dense mix still let the fencers walk into each
+other: the video showed the opponent *start* a lunge, then both close past blade distance,
+collapse together, and topple. The soft penalty only nudges; closing was still the policy's
+move. So make body contact **terminal and costly**, not merely discouraged.
+
+**Change.** If the two fencers' horizontal root gap drops below `contact_term_dist=0.4` m
+(bodies colliding), the bout **ends immediately** and **both** get `−contact_term_pen=1.0`
+(≈ as bad as being touched). Implemented in `_compute_reset` (adds `_body_contact` to the
+reset condition so the env actually resets) and `macro_step` (a body-contact end with no
+valid touch overrides the outcome to `−1`; a genuine touch still scores normally). The v3
+soft penalty (`contact_pen_w=0.05` from 0.6 m) is kept as a smooth approach gradient *before*
+the wall. Knobs: `+env.contact_term_dist=`, `+env.contact_term_pen=`. Net intent: milling into
+a clinch is now a loss, so the only positive-EV behavior left is to score from blade distance
+(which `dense_mix` rewards) — the passive standoff and the slugging match are both punished.
+
+**Recording fix (`visualize_strategy.py`).** The clip now **ends at the first bout
+termination** and freezes ~1 s on the last live frame, labeled with the verdict (GREEN/RED
+scores, BODY CONTACT, OUT OF BOUNDS, or TIMEOUT). Before, it ran a fixed 600 frames and the
+env auto-reset through many bouts, so a hit looked like a teleport rather than an ending —
+which is why v2/v3 clips "didn't end" on a hit even though training did terminate on it.
+
+**Note — sparse vs. original reward:** the ±1 the strategy optimizes is a *wrapper I built*
+around SMPLOlympics' original touch detection (`green_win`/`red_win`); the original fencing
+task itself trained on the DENSE reward (`0.1·vel + 0.1·facing + 0.2·strike + 1.0·terminate
++ 0.6·hit`), which is exactly what `dense_mix` now folds back in.
+
+**Command:** `bash scripts/fencing/train_fencing_strategy.sh +strategy.iters=10000`
+(writes `fencing_strategy_v4/`; resume with `+strategy.resume=True`).
+**Record:** `bash scripts/fencing/record_strategy.sh`.
+
+**Outcome:** _(fill in — watch: does `win_rate` finally climb, or do body-contact terminations
+just replace draws (check the new `strategy/contact_penalty` and how often bouts end in
+contact)? if they end every bout in a clinch, `contact_term_dist=0.4` may be too generous or
+they can't attack from range — try tightening it or raising `dense_mix`.)_
+
+---
+
+## strategy-v3: contact penalty + dense-reward mix
 
 **Built on:** `drills-v7` (`output/HumanoidIm/fencing_drills_v7/Humanoid.pth`). Trained
 **fresh** (contact penalty carried over; dense mix is new).

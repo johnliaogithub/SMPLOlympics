@@ -42,6 +42,7 @@ def render_bout(cfg, task, low_level, net, out_path):
     writer = imageio.get_writer(out_path, fps=30, macro_block_size=None)
     task.reset()
     d0 = d1 = 0
+    prev_img = None   # last live frame, held as the freeze when the bout ends
 
     for t in range(total_steps):
         obs = task.obs_buf
@@ -56,6 +57,26 @@ def render_bout(cfg, task, low_level, net, out_path):
         z0 = low_level(obs[:N], task.drill_ids)
         z1 = low_level(obs[N:2 * N], task.opp_drill_ids)
         task.step(torch.cat([z0, z1], dim=0))
+
+        # End the clip at the FIRST bout termination. The env has already auto-reset the
+        # fencers to spawn this step, so rendering now would show a teleport — instead
+        # freeze the previous (live) frame, labeled with why the bout ended.
+        if bool(task.reset_buf[0].item()):
+            if bool(task.green_win[0].item()):
+                verdict = "GREEN (agent 0) SCORES"
+            elif bool(task.red_win[0].item()):
+                verdict = "RED (opponent) SCORES"
+            elif bool(task._body_contact[0].item()):
+                verdict = "BODY CONTACT -- both penalized"
+            elif bool(task.out_bound[0].item()):
+                verdict = "OUT OF BOUNDS"
+            else:
+                verdict = "TIMEOUT"
+            print(f"[bout] ended at step {t}: {verdict}")
+            if prev_img is not None:
+                for _ in range(30):   # ~1 s freeze on the ending
+                    writer.append_data(label_frame(prev_img, "BOUT OVER", verdict))
+            break
 
         # camera: side-on, centered on the midpoint of the two fencers
         r0 = task._humanoid_root_states_list[0][0, 0:3].cpu().numpy()
@@ -73,6 +94,7 @@ def render_bout(cfg, task, low_level, net, out_path):
 
         label = f"green: {DRILL_NAMES[int(d0[0])]}   |   red: {DRILL_NAMES[int(d1[0])]}"
         writer.append_data(label_frame(img, "strategy bout", label))
+        prev_img = img
 
     writer.close()
     print(f"\n============ Strategy bout saved to {out_path} ============")

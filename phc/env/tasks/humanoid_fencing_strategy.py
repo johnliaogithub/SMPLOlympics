@@ -46,14 +46,26 @@ class HumanoidFencingStrategy(HumanoidFencingDrills):
         # window, when the horizontal root gap drops below contact_pen_dist.
         self.contact_pen_w = cfg["env"].get("contact_pen_w", 0.05)
         self.contact_pen_dist = cfg["env"].get("contact_pen_dist", 0.6)
+        # HARD termination: if the two fencers' bodies collide (horizontal root gap below
+        # contact_term_dist), END the bout and give BOTH a negative reward. A slugging match
+        # is not fencing; the soft penalty above only nudged, so this makes contact terminal.
+        self.contact_term_dist = cfg["env"].get("contact_term_dist", 0.4)
+        self.contact_term_pen = cfg["env"].get("contact_term_pen", 1.0)
+        self._body_contact = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
 
     def _compute_reward(self, actions):
         # Dense fencing reward (original formulation) for logging/comparison only.
         HumanoidFencing._compute_reward(self, actions)
 
     def _compute_reset(self):
-        # Real match: out-of-bounds, a scored win, or a fall ends the episode.
-        game_done = torch.logical_or(self.out_bound, torch.logical_or(self.red_win, self.green_win))
+        # Bodies colliding (horizontal root gap below contact_term_dist) ends the bout too;
+        # stash the flag so macro_step can assign the mutual contact penalty. Read post-step
+        # like green_win/red_win (holds until the next physics step recomputes it).
+        gap = torch.linalg.norm(self._humanoid_root_states_list[0][..., 0:2]
+                                - self._humanoid_root_states_list[1][..., 0:2], dim=-1)
+        self._body_contact = gap < self.contact_term_dist
+        # Real match: out-of-bounds, a scored win, body contact, or a fall ends the episode.
+        game_done = self.out_bound | self.red_win | self.green_win | self._body_contact
         reset_fn = compute_humanoid_reset_z if (self.step_counter > self.warmup_time or flags.test) else compute_humanoid_reset
         self.reset_buf[:], self._terminate_buf[:] = reset_fn(self.reset_buf, self.progress_buf,
                                                        self._contact_forces_list, self._contact_body_ids,
@@ -114,7 +126,13 @@ class HumanoidFencingStrategyZ(HumanoidFencingStrategy):
             # env has already auto-reset the finished matches.
             step_done = self.reset_buf.bool()
             newly = step_done & (~done)
+            is_win = self.green_win.bool() | self.red_win.bool()
             outcome = self.green_win.float() - self.red_win.float()  # +1 / -1 / 0(timeout|oob)
+            # a body-contact end WITHOUT a valid touch penalizes both fencers (a real
+            # touch still scores normally even if they happened to be close)
+            contact_term = self._body_contact & newly & (~is_win)
+            outcome = torch.where(contact_term,
+                                  torch.full_like(outcome, -self.contact_term_pen), outcome)
             sparse = torch.where(newly, outcome, sparse)
             dense = dense + self.rew_buf[:N] * (~done).float()
 
