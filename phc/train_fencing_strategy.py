@@ -155,6 +155,7 @@ def train(cfg, task, env):
 
         ep_dense = torch.zeros(N, device=device)
         ep_contact = torch.zeros(N, device=device)
+        ep_time_pen = torch.zeros(N, device=device)
         win_count = loss_count = end_count = 0
         drill_hist = torch.zeros(NUM_DRILLS, device=device)
 
@@ -177,6 +178,7 @@ def train(cfg, task, env):
 
             ep_dense += dense
             ep_contact += task._last_contact_pen
+            ep_time_pen += task._last_time_pen
             drill_hist += torch.bincount(action, minlength=NUM_DRILLS).float()
             # count wins/losses from the penalty-free outcome, not the shaped reward
             win_count += (task._last_outcome > 0).sum().item()
@@ -235,6 +237,7 @@ def train(cfg, task, env):
                 "strategy/policy_entropy": ent.item(),
                 "strategy/value_loss": v_loss.item(),
                 "strategy/contact_penalty": ep_contact.mean().item(),
+                "strategy/time_penalty": ep_time_pen.mean().item(),
                 "strategy/dense_mix_w": dense_mix,
             }
             dh = drill_hist / drill_hist.sum().clamp_min(1)
@@ -252,6 +255,17 @@ def train(cfg, task, env):
                         "optimizer": opt.state_dict(), "iter": it}
             torch.save(snapshot, os.path.join(out_dir, f"strategy_{it:08d}.pth"))
             torch.save(snapshot, os.path.join(out_dir, "strategy.pth"))
+
+    # The loop's last iteration (total_iters-1) is rarely a save_every multiple, so persist
+    # it explicitly — both the numbered snapshot and the rolling strategy.pth.
+    if total_iters > start_iter:
+        os.makedirs(out_dir, exist_ok=True)
+        final_it = total_iters - 1
+        snapshot = {"strategy_net": net.state_dict(),
+                    "optimizer": opt.state_dict(), "iter": final_it}
+        torch.save(snapshot, os.path.join(out_dir, f"strategy_{final_it:08d}.pth"))
+        torch.save(snapshot, os.path.join(out_dir, "strategy.pth"))
+        print(f"[Strategy] final checkpoint saved at iter {final_it}")
 
 
 @hydra.main(version_base=None, config_path="../phc/data/cfg", config_name="config")

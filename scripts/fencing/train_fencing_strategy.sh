@@ -37,7 +37,7 @@ python phc/train_fencing_strategy.py \
     project_name=SMPLOlympics \
     num_agents=2 \
     learning=amp_z_self_play_no_disc \
-    exp_name=fencing_strategy_v4 \
+    exp_name=fencing_strategy_v5 \
     env=env_amp_z \
     env.num_envs=256 \
     env.task=HumanoidFencingStrategyZ \
@@ -51,4 +51,5 @@ python phc/train_fencing_strategy.py \
     "+env.low_level_checkpoint=${LOW_LEVEL}" \
     +env.macro_K=15 \
     +strategy.dense_mix=0.05 \
+    +env.time_pen_w=0.005 \
     "$@"

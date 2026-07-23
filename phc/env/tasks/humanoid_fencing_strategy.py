@@ -52,6 +52,13 @@ class HumanoidFencingStrategy(HumanoidFencingDrills):
         self.contact_term_dist = cfg["env"].get("contact_term_dist", 0.4)
         self.contact_term_pen = cfg["env"].get("contact_term_pen", 1.0)
         self._body_contact = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+        # Per-physics-step "cost of existence": a small negative each LIVE step so dragging the
+        # bout out (standing / dancing at the edge of range) is net-negative — the only way to
+        # come out ahead is to END it by scoring. Offsets the dense reward's always-positive
+        # facing/hover terms. Keep time_pen_w * episode_length < 1 (the loss magnitude) or the
+        # agent prefers to be touched fast (suicide); the learner-OOB penalty below stops the
+        # other escape (fleeing the narrow strip to end the bout early).
+        self.time_pen_w = cfg["env"].get("time_pen_w", 0.0)
 
     def _compute_reward(self, actions):
         # Dense fencing reward (original formulation) for logging/comparison only.
@@ -113,6 +120,7 @@ class HumanoidFencingStrategyZ(HumanoidFencingStrategy):
         sparse = torch.zeros(N, device=self.device)
         dense = torch.zeros(N, device=self.device)
         contact_pen = torch.zeros(N, device=self.device)
+        time_pen = torch.zeros(N, device=self.device)   # live-step count -> cost of existence
         done = torch.zeros(N, dtype=torch.bool, device=self.device)
 
         for _ in range(self.macro_K):
@@ -128,10 +136,14 @@ class HumanoidFencingStrategyZ(HumanoidFencingStrategy):
             newly = step_done & (~done)
             is_win = self.green_win.bool() | self.red_win.bool()
             outcome = self.green_win.float() - self.red_win.float()  # +1 / -1 / 0(timeout|oob)
-            # a body-contact end WITHOUT a valid touch penalizes both fencers (a real
-            # touch still scores normally even if they happened to be close)
-            contact_term = self._body_contact & newly & (~is_win)
-            outcome = torch.where(contact_term,
+            # A bout that ends by body contact OR by the LEARNER fleeing out of bounds (with no
+            # valid touch) is treated as a loss for the learner — closes both cheap escapes from
+            # the cost-of-existence penalty. A genuine touch still scores normally.
+            lr = self._humanoid_root_states_list[0]
+            learner_oob = ((lr[..., 0] < self.bounding_box[0]) | (lr[..., 0] > self.bounding_box[1])
+                           | (lr[..., 1] < self.bounding_box[2]) | (lr[..., 1] > self.bounding_box[3]))
+            bad_end = (self._body_contact | learner_oob) & newly & (~is_win)
+            outcome = torch.where(bad_end,
                                   torch.full_like(outcome, -self.contact_term_pen), outcome)
             sparse = torch.where(newly, outcome, sparse)
             dense = dense + self.rew_buf[:N] * (~done).float()
@@ -141,10 +153,12 @@ class HumanoidFencingStrategyZ(HumanoidFencingStrategy):
             gap = torch.linalg.norm(self._humanoid_root_states_list[0][..., 0:2]
                                     - self._humanoid_root_states_list[1][..., 0:2], dim=-1)
             contact_pen = contact_pen + torch.clamp_min(self.contact_pen_dist - gap, 0.0) * (~done).float()
+            time_pen = time_pen + (~done).float()   # one unit per LIVE physics step
             done = done | step_done
 
         # Stash penalty-free outcome and the raw contact penalty so the trainer can
         # log win/loss (clean, +1/-1/0) and contact separately from the shaped reward.
         self._last_outcome = sparse.clone()
         self._last_contact_pen = contact_pen.clone()
-        return sparse - self.contact_pen_w * contact_pen, dense, done
+        self._last_time_pen = time_pen.clone()
+        return sparse - self.contact_pen_w * contact_pen - self.time_pen_w * time_pen, dense, done

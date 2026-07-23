@@ -8,7 +8,56 @@ Newest version on top.
 
 ---
 
-## strategy-v4 — current: body-contact TERMINATION (hard wall)
+## strategy-v5 — current: cost-of-existence (per-step time penalty)
+
+**Built on:** `drills-v7`. Carries v4 (contact penalty + `dense_mix=0.05` + body-contact
+termination); adds a per-step existence penalty. Separate version — changes the reward baseline.
+
+**Motivation (from watching v4 ~iter 2500–3000).** The hard body-contact wall stopped the
+clinching, but they found a NEW passive equilibrium: one fencer stands, the other approaches
+and **retreats just before entering range**, neither committing. Diagnosis (confirmed in
+`compute_fencing_reward`): the dense reward pays for *inaction* — `facing_reward ≈ 1.0` just
+for facing the opponent (`0.1/step`), `vel_reward` pays the approacher, `hit_reward` pays for
+hovering the tip near the target. Over a 175-step bout ×`dense_mix=0.05` the facing term alone
+farms ≈ +0.6–0.9 — comparable to a whole win — so the standoff is *positive-EV*. The bout has
+no clock pressure, so dragging it out is free.
+
+**Change: `time_pen_w=0.005` subtracted per LIVE physics step** (accumulated in `macro_step`,
+like the contact penalty). This is the same "cost of existence" trick that made the lunge drill
+explosive instead of a slow creep: a passive full bout now nets slightly negative (≈ −0.2 to
+−0.3 after the dense farm offset), while a quick *scoring* bout stays clearly positive (≈ +0.9)
+because it ends before the penalty accumulates. Only ending the bout by SCORING comes out ahead.
+
+**Two escape hatches this could open — both closed:**
+1. **Fleeing.** The strip is only 2 m wide (`x∈[−1,1]`, spawn at x=0) and out-of-bounds ended
+   the bout at outcome 0 — so a per-step penalty would teach "step 1 m sideways and leave." Now
+   the **learner going out of bounds is treated as a loss** (−`contact_term_pen`), folded into
+   the same `bad_end` override as body contact.
+2. **Suicide.** If the existence cost over a full bout exceeded the loss magnitude (−1), the
+   agent would prefer to be touched fast. `time_pen_w=0.005 × 175 ≈ 0.875 < 1.0`, so a passive
+   drag stays *better* than a loss — no suicide incentive. **Do not raise `time_pen_w` above
+   ~0.0057** without also raising the loss magnitude, or this flips. New `strategy/time_penalty`
+   metric logs the mean accrued cost; watch `loss_rate` for a suicide signature (spikes with a
+   short episode length).
+
+**Knobs:** `+env.time_pen_w=` (existence cost/step). **Tuning tension to watch:** the facing
+farm (~0.005/step after `dense_mix`) and the suicide ceiling (0.0057/step) bracket this term
+tightly. If they still won't attack at 0.005, the cleaner next move is to cut the *inaction
+farm at the source* — lower `dense_mix`, or mix only the OFFENSIVE dense components (hit +
+terminate, dropping facing/vel/strike) so the dense reward can't pay for standing at all. That
+would be strategy-v6 if needed.
+
+**Command:** `bash scripts/fencing/train_fencing_strategy.sh +strategy.iters=10000`
+(writes `fencing_strategy_v5/`; `dense_mix=0.05`, `time_pen_w=0.005` baked in).
+**Record:** `bash scripts/fencing/record_strategy.sh`.
+
+**Outcome:** _(fill in — does `win_rate` finally climb / bouts get shorter and more decisive?
+watch `strategy/time_penalty` (should fall as bouts shorten), `loss_rate` (suicide check), and
+whether they now flee — if `bad_end`s dominate, tighten or reconsider.)_
+
+---
+
+## strategy-v4: body-contact TERMINATION (hard wall)
 
 **Built on:** `drills-v7`. Carries v3 (contact penalty + `dense_mix=0.05`); adds a hard
 terminal on body contact. Separate version because it changes the episode dynamics, not just
