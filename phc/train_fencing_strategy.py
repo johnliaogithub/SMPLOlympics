@@ -156,7 +156,7 @@ def train(cfg, task, env):
         ep_dense = torch.zeros(N, device=device)
         ep_contact = torch.zeros(N, device=device)
         ep_time_pen = torch.zeros(N, device=device)
-        win_count = loss_count = end_count = 0
+        win_count = loss_count = badend_count = end_count = 0
         drill_hist = torch.zeros(NUM_DRILLS, device=device)
 
         for t in range(T):
@@ -180,9 +180,11 @@ def train(cfg, task, env):
             ep_contact += task._last_contact_pen
             ep_time_pen += task._last_time_pen
             drill_hist += torch.bincount(action, minlength=NUM_DRILLS).float()
-            # count wins/losses from the penalty-free outcome, not the shaped reward
-            win_count += (task._last_outcome > 0).sum().item()
-            loss_count += (task._last_outcome < 0).sum().item()
+            # separate the end-causes: a real touch by us (win), a real touch by them (loss),
+            # vs a bad_end (out-of-bounds / body contact). Draw (timeout) = the remainder.
+            win_count += task._last_win.sum().item()
+            loss_count += task._last_redloss.sum().item()
+            badend_count += task._last_badend.sum().item()
             end_count += done.sum().item()
 
         # bootstrap value of the final state
@@ -232,7 +234,9 @@ def train(cfg, task, env):
                 "strategy/sparse_return": rew_b.sum(0).mean().item(),
                 "strategy/dense_return": ep_dense.mean().item(),
                 "strategy/win_rate": win_count / max(end_count, 1),
-                "strategy/loss_rate": loss_count / max(end_count, 1),
+                "strategy/loss_rate": loss_count / max(end_count, 1),          # REAL opponent touch
+                "strategy/bad_end_rate": badend_count / max(end_count, 1),     # OOB / body contact
+                "strategy/draw_rate": max(end_count - win_count - loss_count - badend_count, 0) / max(end_count, 1),
                 "strategy/episodes_ended": end_count,
                 "strategy/policy_entropy": ent.item(),
                 "strategy/value_loss": v_loss.item(),
@@ -246,8 +250,10 @@ def train(cfg, task, env):
             wandb.log(log, step=it)
 
         if it % 20 == 0:
+            e = max(end_count, 1)
             print(f"[it {it}] sparse_ret={rew_b.sum(0).mean():.3f} "
-                  f"win_rate={win_count / max(end_count,1):.3f} ended={end_count}")
+                  f"win={win_count/e:.3f} loss={loss_count/e:.3f} "
+                  f"bad_end={badend_count/e:.3f} ended={end_count}")
 
         if it > 0 and it % save_every == 0:
             os.makedirs(out_dir, exist_ok=True)

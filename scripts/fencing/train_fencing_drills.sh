@@ -9,6 +9,8 @@
 #           all against a frozen opponent. Start here.
 #   B     — all six drills including dodge. Resume from a phase A checkpoint so
 #           the snapshot opponent already knows how to lunge.
+#   C     — DODGE-focused: heavily upweight dodge, keep lunges (so the snapshot
+#           opponent stays a real threat) + a little basics for retention.
 #   fresh — phase A from scratch, ignoring existing checkpoints.
 #
 # NOTE: sitch_frequency is set astronomically high on purpose. Agent 0 is always
@@ -29,7 +31,7 @@ fi
 
 # Drill order: advance retreat stand lunge_upper lunge_groin dodge step_left step_right
 PHASE="${1:-A}"
-if [[ "$PHASE" =~ ^[ABDLabdl]$ ]] || [[ "$PHASE" == "fresh" ]]; then
+if [[ "$PHASE" =~ ^[ABCDLabcdl]$ ]] || [[ "$PHASE" == "fresh" ]]; then
     shift
 else
     PHASE="A"
@@ -38,7 +40,7 @@ fi
 # Lunge-only diagnostic gets its OWN experiment dir so it never touches v4.
 case "$PHASE" in
   L|l) EXP_NAME=fencing_lunge_only ;;
-  *)   EXP_NAME=fencing_drills_v7 ;;
+  *)   EXP_NAME=fencing_drills_v8 ;;
 esac
 OUTPUT_DIR=output/HumanoidIm/${EXP_NAME}
 
@@ -46,6 +48,12 @@ case "$PHASE" in
   B|b)
     echo "[Phase] B: all drills incl. dodge (vs lunging opponent)"
     DRILL_ARGS="+env.drill_probs=[1,1,1,1,1,1,1,1]"
+    ;;
+  C|c)
+    echo "[Phase] C: DODGE-focused (dodge upweighted; lunges kept as the threat)"
+    # dodge (idx 5) dominant; lunges (idx 3,4) kept high so the snapshot opponent
+    # remains a real lunging threat; basics/lateral low but nonzero for retention.
+    DRILL_ARGS="+env.drill_probs=[0.4,0.4,0.4,0.6,0.6,2.0,0.4,0.4]"
     ;;
   D|d)
     echo "[Phase] D: emphasize the new/lunge drills (warm-started net)"

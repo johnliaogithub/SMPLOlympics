@@ -10,7 +10,38 @@ config flags (logged to W&B) rather than code replacements. See v5.
 
 ---
 
-## v7 — current: add dodge (warm-started from v6)
+## v8 — current: dodge-focused fine-tune (warm-started from v7)
+
+**Motivation:** dodge never learned under v7 (phase B, dodge at equal weight). Note: this is
+NOT related to the strategy-net `win_frame_hit=45` bug — the drills use the *instantaneous*
+`sword_hit_list` (single-frame) for the dodge hit/penalty (`humanoid_fencing_drills.py` lines
+362, 438), never the 45-frame win accumulation. So dodge's failure is its own problem: it's a
+hard reactive skill, `avoid_r ≈ 1` whenever the opponent is far (standing is rewarded most of
+the time), and — structurally — the observation does NOT include the opponent's sword tip, so
+the learner is partly blind to the incoming blade. v8 attacks the training-time budget half of
+that (far more dodge reps); the obs blindness remains a known cap.
+
+- **New experiment dir `fencing_drills_v8`**, seeded by copying all of `fencing_drills_v7/*.pth`
+  (v7 trained to epoch 50000). Training resumes from epoch 50000. `fencing_drills_v7/` is left
+  FROZEN (it was strategy-v1…v5's pinned low-level).
+- **New phase C** (dodge-focused): `drill_probs=[0.4,0.4,0.4,0.6,0.6,2.0,0.4,0.4]` — dodge (idx 5)
+  ~40% of samples, lunges kept high so the snapshot opponent stays a real lunging threat,
+  basics/lateral low-but-nonzero for retention. Same reward code as v6/v7 (checkpoint/config
+  version, not a code version).
+
+**Command:** `bash scripts/fencing/train_fencing_drills.sh C
+learning.params.config.max_epochs=56000`  (phase C; resumes from the copied epoch-50000
+checkpoint, so max_epochs must exceed 50000 — 56000 = +6000).
+
+**Watch:** dodge is the target, but guard retention — if advance/retreat/stand/step or the
+lunges visibly degrade in a v8 recording, raise their `drill_probs` share. Dodge may still cap
+low due to the opponent-sword-tip obs gap (a bigger, obs-size-changing fix, deferred).
+
+**Outcome:** _(fill in after training)_
+
+---
+
+## v7: add dodge (warm-started from v6)
 
 **Motivation:** v6 was trained phase A (no dodge) — `strategy-v1` was accidentally run on
 it, so it was offense-only. v7 adds dodge WITHOUT touching v6 (which `strategy-v1` depends

@@ -122,6 +122,11 @@ class HumanoidFencingStrategyZ(HumanoidFencingStrategy):
         contact_pen = torch.zeros(N, device=self.device)
         time_pen = torch.zeros(N, device=self.device)   # live-step count -> cost of existence
         done = torch.zeros(N, dtype=torch.bool, device=self.device)
+        # per-env end-cause tallies (for clean logging): a real touch by us / by them, vs a
+        # bad_end (out-of-bounds or body contact). Draw (timeout) = ended but none of these.
+        win_ev = torch.zeros(N, device=self.device)
+        redloss_ev = torch.zeros(N, device=self.device)
+        badend_ev = torch.zeros(N, device=self.device)
 
         for _ in range(self.macro_K):
             obs = self.obs_buf  # (2N, obs_dim)
@@ -148,6 +153,12 @@ class HumanoidFencingStrategyZ(HumanoidFencingStrategy):
             sparse = torch.where(newly, outcome, sparse)
             dense = dense + self.rew_buf[:N] * (~done).float()
 
+            # record WHY each bout ended (captured once, at the ending step)
+            green, red = self.green_win.bool(), self.red_win.bool()
+            win_ev = torch.where(newly & green, torch.ones_like(win_ev), win_ev)
+            redloss_ev = torch.where(newly & red & (~green), torch.ones_like(redloss_ev), redloss_ev)
+            badend_ev = torch.where(bad_end, torch.ones_like(badend_ev), badend_ev)
+
             # penalize the two fencers walking into each other: horizontal root gap
             # below contact_pen_dist accrues a penalty (only while the match is live).
             gap = torch.linalg.norm(self._humanoid_root_states_list[0][..., 0:2]
@@ -161,4 +172,7 @@ class HumanoidFencingStrategyZ(HumanoidFencingStrategy):
         self._last_outcome = sparse.clone()
         self._last_contact_pen = contact_pen.clone()
         self._last_time_pen = time_pen.clone()
+        self._last_win = win_ev            # green touch scored
+        self._last_redloss = redloss_ev    # opponent touch scored (REAL loss)
+        self._last_badend = badend_ev      # out-of-bounds or body contact (not a touch)
         return sparse - self.contact_pen_w * contact_pen - self.time_pen_w * time_pen, dense, done

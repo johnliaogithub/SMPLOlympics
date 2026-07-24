@@ -57,7 +57,10 @@ class HumanoidFencing(humanoid_amp_task.HumanoidAMPTask):
         self.power_usage_coefficient = cfg["env"].get("power_usage_coefficient", 0.0025)
         self.power_acc = torch.zeros((self.num_envs, 2 )).to(self.device)
         self.sword_hit_history = torch.zeros((self.num_envs, 2)).to(self.device)
-        self.win_frame_hit = 45 # hit more than this frames, you win. 
+        # Win = MORE than this many cumulative on-target hit-frames (tip <0.1m AND >50N force).
+        # Default 45 (~1.5s of forceful contact) is near-impossible for a quick thrust; override
+        # low (e.g. 5) so a committed touch actually scores. Logged in W&B config.
+        self.win_frame_hit = cfg["env"].get("win_frame_hit", 45)
         
         ########## building for boxing area ##########
         self.bounding_box = torch.tensor([-1, 1, -7, 7,]).to(self.device) # x_min, x_max, y_min, y_max

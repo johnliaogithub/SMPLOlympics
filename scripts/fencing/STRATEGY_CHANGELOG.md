@@ -8,7 +8,63 @@ Newest version on top.
 
 ---
 
-## strategy-v5 — current: cost-of-existence (per-step time penalty)
+## strategy-v6 — current: WINNABLE touch (lower win_frame_hit) + metric split
+
+**Built on:** `drills-v8` (dodge-focused fine-tune of v7). Carries all of v5 (contact penalty,
+`dense_mix=0.05`, body-contact termination, `time_pen_w=0.005`). Fixes a fundamental,
+previously-invisible bug in the win condition that affected **every** strategy version so far.
+
+**Also this version:** the loss metric is now split — `strategy/loss_rate` counts only a REAL
+opponent touch (`red_win`), while `strategy/bad_end_rate` counts out-of-bounds + body-contact
+ends, and `strategy/draw_rate` the timeouts. v5's `loss_rate` lumped all three, which is why it
+looked alarmingly high when it was mostly the fencers wandering off the 2 m strip, not being
+touched. `macro_step` stashes `_last_win/_last_redloss/_last_badend`; the trainer tallies each.
+
+**Is `win_frame_hit=5` cheating? No — if anything it's stricter than real fencing.** Electronic
+scoring registers a touch in ~2–15 ms (épée ~2–10, foil ~14); at 30 Hz one frame is 33 ms, so
+even ONE frame already exceeds a real touch's minimum contact time. 45 frames (1.5 s) is ~100×
+too long; 5 frames (167 ms) is a conservative "committed touch." The real anti-cheat guard is
+unchanged: tip <0.1 m AND >50 N force — a genuine forceful on-target contact. (The rigid,
+non-bending blade makes SUSTAINED contact physically harder than a real flexing foil, another
+reason 45 was unreachable; adding blade flex is a soft-body modeling change we're not doing.)
+
+**The bug.** A "win" was never a touch — [`humanoid_fencing.py`](../../phc/env/tasks/humanoid_fencing.py)
+scores it as `sword_hit_history > win_frame_hit` with `win_frame_hit = 45`: **more than 45
+cumulative hit-frames**, where a hit-frame = sword tip within 0.1 m of a target AND >50 N
+contact force. That's ~1.5 s of forceful on-target contact. A quick thrust lands a few frames
+and prints "Green Hit"/"Red Hit" but accumulates maybe 2–5 of the 46 frames needed, so
+`green_win`/`red_win` **almost never fire**. Consequences seen at v5 iter 2999:
+- `win_rate` ~0 — real touches never reach the threshold.
+- `loss_rate` high — but mostly the v5 `bad_end`s (out-of-bounds on the 2 m strip + body
+  contact), which are counted as losses, NOT opponent touches.
+- `episodes_ended` pinned at 8192 = 256 envs × 32 macro-steps — every env terminates within
+  every 15-step window, i.e. bouts are extremely short (walking out of the narrow strip fast).
+- Recording: "Red Hit" then "Green Hit", neither ends the bout, then OUT OF BOUNDS at step 62.
+
+This likely explains a lot of the whole passivity saga: **if a touch can't win, attacking has
+no payoff, so passivity/standoff is rational.** The 45-frame threshold was an invisible ceiling
+under v1–v5.
+
+**Change.** `win_frame_hit` is now a config (default unchanged at 45); the strategy trains and
+records with `+env.win_frame_hit=5` — a committed touch (≥6 on-target forceful frames) scores.
+Aligns the win with fencing (a solid touch = a point) and finally gives the strategy an
+achievable win signal. Base task and the drills are untouched (they keep the 45 default / use
+their own drill-hit logic). **Tuning:** if `win_rate` is still ~0, lower toward 2–3; if wins
+look flukey/grazing, raise. Watch that `green_win` vs `red_win` are now both reachable (a real
+duel), and that `loss_rate` split shifts from `bad_end`s toward genuine opponent touches.
+
+**Command:** `bash scripts/fencing/train_fencing_strategy.sh +strategy.iters=10000`
+(writes `fencing_strategy_v6/`; `dense_mix=0.05`, `time_pen_w=0.005`, `win_frame_hit=5` baked in).
+**Record:** `bash scripts/fencing/record_strategy.sh` (also uses `win_frame_hit=5` so hits end bouts).
+
+**Outcome:** _(fill in — does `win_rate` finally lift off 0? read the new split:
+`bad_end_rate` should fall (they stop wandering off / clinching), `loss_rate` now means real
+opponent touches, `draw_rate` = timeouts. Tune `win_frame_hit` (down to 2–3 if wins stay ~0,
+up if wins look like grazes).)_
+
+---
+
+## strategy-v5: cost-of-existence (per-step time penalty)
 
 **Built on:** `drills-v7`. Carries v4 (contact penalty + `dense_mix=0.05` + body-contact
 termination); adds a per-step existence penalty. Separate version — changes the reward baseline.
