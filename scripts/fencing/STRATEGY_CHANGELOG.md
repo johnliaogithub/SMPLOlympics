@@ -8,7 +8,27 @@ Newest version on top.
 
 ---
 
-## strategy-v6 — current: WINNABLE touch (lower win_frame_hit) + metric split
+## strategy-v6.2 — current: re-run of v6 (fresh) with the new instrumentation
+
+**strategy-v6.2 is the EXACT SAME configuration as strategy-v6** — identical reward and
+task: `win_frame_hit=5`, `dense_mix=0.05`, `time_pen_w=0.005`, contact penalty + body-contact
+termination, on the `drills-v8` low-level. Trained **fresh** for 3000 iterations. It writes to
+a SEPARATE dir (`fencing_strategy_v6.2/`) so the original `fencing_strategy_v6/` run is not
+overwritten. The ONLY difference from v6 is added **logging instrumentation** — `mean_bout_len`
+(unconfounded per-env step counter) and the per-cause termination split (`contact_end_rate`,
+`oob_end_rate`, `timeout_rate`, real `loss_rate`); removed the constant `episodes_ended` /
+`dense_mix_w` graphs (`dense_mix` remains in the W&B run config). Logging changes do NOT affect
+training — the policy dynamics are identical to v6. See the v6 entry below for all rationale.
+
+**Command:** `bash scripts/fencing/train_fencing_strategy.sh +strategy.iters=3000`
+(writes `fencing_strategy_v6.2/`, fresh). **Record:** `bash scripts/fencing/record_strategy.sh`.
+
+**Outcome:** _(fill in — first read `mean_bout_len` + `contact_end_rate` vs `oob_end_rate` to
+settle whether bouts are short and whether contact or OOB dominates the endings.)_
+
+---
+
+## strategy-v6: WINNABLE touch (lower win_frame_hit) + metric split
 
 **Built on:** `drills-v8` (dodge-focused fine-tune of v7). Carries all of v5 (contact penalty,
 `dense_mix=0.05`, body-contact termination, `time_pen_w=0.005`). Fixes a fundamental,

@@ -156,7 +156,8 @@ def train(cfg, task, env):
         ep_dense = torch.zeros(N, device=device)
         ep_contact = torch.zeros(N, device=device)
         ep_time_pen = torch.zeros(N, device=device)
-        win_count = loss_count = badend_count = end_count = 0
+        win_count = loss_count = contact_count = oob_count = timeout_count = end_count = 0
+        boutlen_sum = boutlen_cnt = 0.0
         drill_hist = torch.zeros(NUM_DRILLS, device=device)
 
         for t in range(T):
@@ -180,11 +181,15 @@ def train(cfg, task, env):
             ep_contact += task._last_contact_pen
             ep_time_pen += task._last_time_pen
             drill_hist += torch.bincount(action, minlength=NUM_DRILLS).float()
-            # separate the end-causes: a real touch by us (win), a real touch by them (loss),
-            # vs a bad_end (out-of-bounds / body contact). Draw (timeout) = the remainder.
+            # separate every end-cause: our touch / their touch / body contact / learner OOB /
+            # timeout(draw). Plus actual mean bout length (physics steps).
             win_count += task._last_win.sum().item()
             loss_count += task._last_redloss.sum().item()
-            badend_count += task._last_badend.sum().item()
+            contact_count += task._last_contact.sum().item()
+            oob_count += task._last_oob.sum().item()
+            timeout_count += task._last_timeout.sum().item()
+            boutlen_sum += task._last_boutlen_sum.item()
+            boutlen_cnt += task._last_boutlen_cnt.item()
             end_count += done.sum().item()
 
         # bootstrap value of the final state
@@ -230,19 +235,20 @@ def train(cfg, task, env):
                 opt.step()
 
         if wandb.run is not None:
+            e = max(end_count, 1)
             log = {
                 "strategy/sparse_return": rew_b.sum(0).mean().item(),
                 "strategy/dense_return": ep_dense.mean().item(),
-                "strategy/win_rate": win_count / max(end_count, 1),
-                "strategy/loss_rate": loss_count / max(end_count, 1),          # REAL opponent touch
-                "strategy/bad_end_rate": badend_count / max(end_count, 1),     # OOB / body contact
-                "strategy/draw_rate": max(end_count - win_count - loss_count - badend_count, 0) / max(end_count, 1),
-                "strategy/episodes_ended": end_count,
+                "strategy/win_rate": win_count / e,
+                "strategy/loss_rate": loss_count / e,                # REAL opponent touch
+                "strategy/contact_end_rate": contact_count / e,      # ended by body contact
+                "strategy/oob_end_rate": oob_count / e,              # learner out of bounds
+                "strategy/timeout_rate": timeout_count / e,          # draw / opponent OOB
+                "strategy/mean_bout_len": boutlen_sum / max(boutlen_cnt, 1),  # physics steps
                 "strategy/policy_entropy": ent.item(),
                 "strategy/value_loss": v_loss.item(),
                 "strategy/contact_penalty": ep_contact.mean().item(),
                 "strategy/time_penalty": ep_time_pen.mean().item(),
-                "strategy/dense_mix_w": dense_mix,
             }
             dh = drill_hist / drill_hist.sum().clamp_min(1)
             for d, name in enumerate(DRILL_NAMES):
@@ -251,9 +257,10 @@ def train(cfg, task, env):
 
         if it % 20 == 0:
             e = max(end_count, 1)
-            print(f"[it {it}] sparse_ret={rew_b.sum(0).mean():.3f} "
-                  f"win={win_count/e:.3f} loss={loss_count/e:.3f} "
-                  f"bad_end={badend_count/e:.3f} ended={end_count}")
+            print(f"[it {it}] sparse={rew_b.sum(0).mean():.3f} "
+                  f"win={win_count/e:.2f} loss={loss_count/e:.2f} "
+                  f"contact={contact_count/e:.2f} oob={oob_count/e:.2f} "
+                  f"len={boutlen_sum/max(boutlen_cnt,1):.0f}")
 
         if it > 0 and it % save_every == 0:
             os.makedirs(out_dir, exist_ok=True)

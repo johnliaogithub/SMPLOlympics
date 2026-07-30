@@ -59,6 +59,9 @@ class HumanoidFencingStrategy(HumanoidFencingDrills):
         # agent prefers to be touched fast (suicide); the learner-OOB penalty below stops the
         # other escape (fleeing the narrow strip to end the bout early).
         self.time_pen_w = cfg["env"].get("time_pen_w", 0.0)
+        # Persistent per-env physics-step counter for measuring actual bout length (reset when
+        # that env's bout ends). Not confounded by macro-window boundaries like time_pen is.
+        self._boutlen_counter = torch.zeros(self.num_envs, device=self.device)
 
     def _compute_reward(self, actions):
         # Dense fencing reward (original formulation) for logging/comparison only.
@@ -122,11 +125,16 @@ class HumanoidFencingStrategyZ(HumanoidFencingStrategy):
         contact_pen = torch.zeros(N, device=self.device)
         time_pen = torch.zeros(N, device=self.device)   # live-step count -> cost of existence
         done = torch.zeros(N, dtype=torch.bool, device=self.device)
-        # per-env end-cause tallies (for clean logging): a real touch by us / by them, vs a
-        # bad_end (out-of-bounds or body contact). Draw (timeout) = ended but none of these.
+        # per-env end-cause tallies (for clean logging): our touch / their touch / body contact /
+        # learner OOB / timeout(draw). These partition every "newly ended" bout.
         win_ev = torch.zeros(N, device=self.device)
         redloss_ev = torch.zeros(N, device=self.device)
-        badend_ev = torch.zeros(N, device=self.device)
+        contact_ev = torch.zeros(N, device=self.device)
+        oob_ev = torch.zeros(N, device=self.device)
+        timeout_ev = torch.zeros(N, device=self.device)
+        # actual bout-length accumulation (every termination, not window-latched)
+        boutlen_sum = torch.zeros((), device=self.device)
+        boutlen_cnt = torch.zeros((), device=self.device)
 
         for _ in range(self.macro_K):
             obs = self.obs_buf  # (2N, obs_dim)
@@ -153,11 +161,26 @@ class HumanoidFencingStrategyZ(HumanoidFencingStrategy):
             sparse = torch.where(newly, outcome, sparse)
             dense = dense + self.rew_buf[:N] * (~done).float()
 
-            # record WHY each bout ended (captured once, at the ending step)
+            # record WHY each bout ended (captured once, at the ending step). These 5 causes
+            # partition every newly-ended env: touch-by-us / touch-by-them / body contact /
+            # learner OOB / timeout(draw or opponent OOB).
             green, red = self.green_win.bool(), self.red_win.bool()
-            win_ev = torch.where(newly & green, torch.ones_like(win_ev), win_ev)
-            redloss_ev = torch.where(newly & red & (~green), torch.ones_like(redloss_ev), redloss_ev)
-            badend_ev = torch.where(bad_end, torch.ones_like(badend_ev), badend_ev)
+            ones = torch.ones_like(win_ev)
+            contact_end = newly & self._body_contact & (~is_win)
+            oob_end = newly & learner_oob & (~is_win) & (~self._body_contact)
+            timeout_end = newly & (~is_win) & (~self._body_contact) & (~learner_oob)
+            win_ev = torch.where(newly & green, ones, win_ev)
+            redloss_ev = torch.where(newly & red & (~green), ones, redloss_ev)
+            contact_ev = torch.where(contact_end, ones, contact_ev)
+            oob_ev = torch.where(oob_end, ones, oob_ev)
+            timeout_ev = torch.where(timeout_end, ones, timeout_ev)
+
+            # actual bout length: for EVERY env ending this step (not window-latched), record its
+            # step counter, then reset that env's counter. Counts steps since its last termination.
+            self._boutlen_counter = self._boutlen_counter + 1.0
+            boutlen_sum = boutlen_sum + (self._boutlen_counter * step_done.float()).sum()
+            boutlen_cnt = boutlen_cnt + step_done.float().sum()
+            self._boutlen_counter = self._boutlen_counter * (~step_done).float()
 
             # penalize the two fencers walking into each other: horizontal root gap
             # below contact_pen_dist accrues a penalty (only while the match is live).
@@ -174,5 +197,9 @@ class HumanoidFencingStrategyZ(HumanoidFencingStrategy):
         self._last_time_pen = time_pen.clone()
         self._last_win = win_ev            # green touch scored
         self._last_redloss = redloss_ev    # opponent touch scored (REAL loss)
-        self._last_badend = badend_ev      # out-of-bounds or body contact (not a touch)
+        self._last_contact = contact_ev    # ended by body contact
+        self._last_oob = oob_ev            # ended by learner going out of bounds
+        self._last_timeout = timeout_ev    # ended by timeout (draw) / opponent OOB
+        self._last_boutlen_sum = boutlen_sum
+        self._last_boutlen_cnt = boutlen_cnt
         return sparse - self.contact_pen_w * contact_pen - self.time_pen_w * time_pen, dense, done
