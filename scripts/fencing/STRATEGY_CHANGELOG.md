@@ -8,7 +8,58 @@ Newest version on top.
 
 ---
 
-## strategy-v6.2 — current: re-run of v6 (fresh) with the new instrumentation
+## ⚠️ CRITICAL BUG FIX (invalidates strategy-v1 … v6.2) — missing env reset
+
+**Every strategy version up to and including v6.2 trained on broken environments.** The custom
+PPO loop (`train_fencing_strategy.py`) calls `env.reset()` exactly once at startup; `macro_step`
+then steps via `step_z()`, which — unlike the rl_games play loop that trains the drills
+(`self.env_reset(done_indices)` after every step, see `amp_agent.py:243` / `common_agent.py:324`)
+— **never resets finished envs.** So after the first bout ended in each env (within the first
+rollout), that humanoid was never repositioned: it stayed out-of-bounds / fallen / overlapping,
+`reset_buf` recomputed to True every subsequent step, and from ~iteration 2 onward essentially
+ALL training experience was post-terminal garbage. Signatures this produced: `mean_bout_len`
+pinned at 1, `time_pen` constant at 32, old `episodes_ended` constant at 8192 (= 256×32), OOB
+end-rate dominating (a stuck OOB body reports OOB forever), win/loss ≈ 0.01. Recordings looked
+fine ONLY because the recorder stops at the first termination, so it never ran long enough to
+expose the missing reset.
+
+**Fix:** `macro_step` now resets the just-ended envs each physics step
+(`reset_ids = step_done.nonzero(); if len: self.reset(reset_ids)`), exactly mirroring the
+rl_games loop. All outcome/length capture stays before the reset (reads the pre-reset state).
+
+**Implication:** all v1–v6.2 conclusions (passive equilibrium, "attack↔defense deadlock",
+reward-shaping effects) are CONFOUNDED and should be treated as unreliable. Re-run from a clean
+baseline. Recommended: re-run the v6.2 config (identical reward) now that the env actually resets
+— that is the first *valid* strategy training. Watch `mean_bout_len` climb well above 1 as the
+first confirmation the fix works.
+
+---
+
+## strategy-v6.3 — current: FIRST VALID run (v6 config + the env-reset fix)
+
+**Identical configuration to v6 / v6.2** (`win_frame_hit=5`, `dense_mix=0.05`, `time_pen_w=0.005`,
+contact penalty + body-contact termination, drills-v8 low-level, fresh, 3000 iters) — written to
+its own dir `fencing_strategy_v6.3/`. The ONLY substantive difference vs v6.2 is the **critical
+env-reset fix** above: `macro_step` now resets finished envs each step, so this is the **first
+strategy run that trains on a correctly-resetting environment**. Treat v6.3 as the real baseline;
+v1–v6.2 are confounded.
+
+**First thing to check when it starts:** `mean_bout_len` should be well above 1 (was pinned at 1),
+and the per-cause split should spread out instead of OOB-dominating. If `mean_bout_len` is still 1,
+the fix didn't take — stop and investigate before anything else.
+
+The strategy recorder (`visualize_strategy.py`) now plays **5 consecutive bouts** back-to-back
+(configurable via `+env.n_record_bouts`), resetting between them (it needs the same explicit reset,
+since `step_z()` doesn't self-reset), each labeled `BOUT k/5` with its verdict.
+
+**Command:** `bash scripts/fencing/train_fencing_strategy.sh +strategy.iters=3000`
+(writes `fencing_strategy_v6.3/`). **Record:** `bash scripts/fencing/record_strategy.sh`.
+
+**Outcome:** _(fill in — this is the first run whose numbers are trustworthy.)_
+
+---
+
+## strategy-v6.2: re-run of v6 (fresh) with the new instrumentation
 
 **strategy-v6.2 is the EXACT SAME configuration as strategy-v6** — identical reward and
 task: `win_frame_hit=5`, `dense_mix=0.05`, `time_pen_w=0.005`, contact penalty + body-contact

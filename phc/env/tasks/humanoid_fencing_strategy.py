@@ -190,6 +190,16 @@ class HumanoidFencingStrategyZ(HumanoidFencingStrategy):
             time_pen = time_pen + (~done).float()   # one unit per LIVE physics step
             done = done | step_done
 
+            # CRITICAL: step_z() does NOT reset finished envs. In the rl_games training loop the
+            # ALGO does this (self.env_reset(done_indices) after every step); this custom loop has
+            # no such call, so without it a terminated humanoid stays stuck (out-of-bounds/fallen)
+            # and reset_buf fires every subsequent step. Reset the just-ended envs here, exactly
+            # as rl_games does, so a new bout begins. All outcome/length capture above reads the
+            # pre-reset state, so it must stay before this.
+            reset_ids = step_done.nonzero(as_tuple=False).flatten()
+            if reset_ids.numel() > 0:
+                self.reset(reset_ids)
+
         # Stash penalty-free outcome and the raw contact penalty so the trainer can
         # log win/loss (clean, +1/-1/0) and contact separately from the shaped reward.
         self._last_outcome = sparse.clone()
