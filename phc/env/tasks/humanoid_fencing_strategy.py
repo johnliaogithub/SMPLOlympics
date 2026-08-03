@@ -62,6 +62,17 @@ class HumanoidFencingStrategy(HumanoidFencingDrills):
         # Persistent per-env physics-step counter for measuring actual bout length (reset when
         # that env's bout ends). Not confounded by macro-window boundaries like time_pen is.
         self._boutlen_counter = torch.zeros(self.num_envs, device=self.device)
+        # OFFENSE-ONLY dense: mix in only the terminate+hit reward components (drop the always-
+        # positive vel/facing/strike that let the policy farm dense reward while standing still).
+        self.offense_only_dense = cfg["env"].get("offense_only_dense", False)
+        self._last_reward_raw = torch.zeros((self.num_envs, 5), device=self.device)
+        # win_frame_hit CURRICULUM: start lenient (a touch scores fast) and ramp up to the target
+        # over win_frame_hit_ramp_steps physics steps, so the agent gets early scoring signal, then
+        # must land cleaner touches. Only active when start < end (else win_frame_hit stays constant).
+        self._wfh_end = self.win_frame_hit                                    # target (from win_frame_hit config)
+        self._wfh_start = cfg["env"].get("win_frame_hit_start", self._wfh_end)
+        self._wfh_ramp_steps = cfg["env"].get("win_frame_hit_ramp_steps", 0)
+        self.win_frame_hit = self._wfh_start
 
     def _compute_reward(self, actions):
         # Dense fencing reward (original formulation) for logging/comparison only.
@@ -120,6 +131,11 @@ class HumanoidFencingStrategyZ(HumanoidFencingStrategy):
         self.drill_ids[:] = learner_drills
         self.opp_drill_ids[:] = opp_drills
 
+        # win_frame_hit curriculum: ramp start -> end over win_frame_hit_ramp_steps physics steps.
+        if self._wfh_ramp_steps > 0 and self._wfh_end != self._wfh_start:
+            frac = min(1.0, self.step_counter / self._wfh_ramp_steps)
+            self.win_frame_hit = self._wfh_start + (self._wfh_end - self._wfh_start) * frac
+
         sparse = torch.zeros(N, device=self.device)
         dense = torch.zeros(N, device=self.device)
         contact_pen = torch.zeros(N, device=self.device)
@@ -159,7 +175,20 @@ class HumanoidFencingStrategyZ(HumanoidFencingStrategy):
             outcome = torch.where(bad_end,
                                   torch.full_like(outcome, -self.contact_term_pen), outcome)
             sparse = torch.where(newly, outcome, sparse)
-            dense = dense + self.rew_buf[:N] * (~done).float()
+            # dense signal mixed into the PPO reward by the trainer. Offense-only = the components
+            # that require acting on the opponent — strike (force on their target zones minus force
+            # on yours), terminate (the score), hit (tip->target proximity). Dropped: vel (raw
+            # approach velocity — farmable locomotion, drove the walk-into-contact) and facing
+            # (~1 just for standing and facing). Full = the original weighted sum.
+            # rr columns: [0]=vel [1]=facing [2]=strike [3]=terminate [4]=hit
+            if self.offense_only_dense:
+                rr = self._last_reward_raw
+                step_dense = (self.reward_weights['reward_s'] * rr[:, 2]
+                              + self.reward_weights['reward_t'] * rr[:, 3]
+                              + self.reward_weights['reward_h'] * rr[:, 4])
+            else:
+                step_dense = self.rew_buf[:N]
+            dense = dense + step_dense * (~done).float()
 
             # record WHY each bout ended (captured once, at the ending step). These 5 causes
             # partition every newly-ended env: touch-by-us / touch-by-them / body contact /

@@ -35,7 +35,51 @@ first confirmation the fix works.
 
 ---
 
-## strategy-v6.3 — current: FIRST VALID run (v6 config + the env-reset fix)
+## strategy-v7 — current: offense-only dense + win_frame_hit curriculum
+
+**Built on:** `drills-v8`, on the reset-fixed env (v6.3 was the first valid run). v6.3's clean
+data exposed the real problem: `win_rate = loss_rate = 0` for the ENTIRE run — the policy
+converged to a passive face-and-wait-for-timeout (timeout_rate → 0.86), and `sparse_return` rose
+2.8 → 3.9 purely from **dense-farming**: `dense_mix·dense` ≈ 7/rollout (mostly the always-on
+`facing` term) vs a time penalty that can only claw back ~2.3 and is capped by the suicide ceiling
+(`time_pen_w < 1/bout_len`). No `time_pen_w` can beat the facing farm — the dense reward itself
+was paying for standing still.
+
+**Change 1 — offense-only dense (`+env.offense_only_dense=True`).** The dense signal mixed into
+the PPO reward is now ONLY the components that require acting on the opponent:
+`reward_s·strike + reward_t·terminate + reward_h·hit` — strike = contact force on THEIR target
+zones minus force on yours (offense+defense), terminate = the score, hit = tip→target proximity.
+Dropped: `vel` (raw approach velocity — farmable locomotion that drove the walk-into-contact) and
+`facing` (~1 just for standing and facing). Standing-and-facing now earns ~0 dense; the only way
+to raise it is to act on the opponent. Plumbing: `humanoid_fencing._compute_reward` stashes
+`self._last_reward_raw` (`[vel,facing,strike,terminate,hit]`); `macro_step` builds the sum from it. `dense_mix` stays 0.05 (kept low so a tip-hover farm can't out-earn a
+real touch once the time penalty is netted in); watch `dense_return` vs `win_rate` for a hover farm.
+
+**Change 2 — win_frame_hit curriculum (`+env.win_frame_hit_start=1`,
+`win_frame_hit_ramp_steps=700000`, end `win_frame_hit=5`).** Starts lenient (a touch scores after
+~2 on-target forceful frames) so the agent gets EARLY scoring signal, then ramps linearly to 5
+(a committed touch) over 700k physics steps (~iter 1460 at 480 steps/iter). Ramps on
+`step_counter` inside `macro_step`; recording sets no `_start`, so it uses a constant 5. New
+`strategy/win_frame_hit` metric logs the live value.
+
+**Why both:** offense-only dense gives a gradient toward attacking; the curriculum makes the first
+touches actually reachable so that gradient gets reinforced by real +1s instead of dying in the
+"never lands 6 frames" gap. Time + contact penalties are unchanged — but now the time penalty
+finally works, because with no facing farm a passive bout is genuinely net-negative.
+
+**Command:** `bash scripts/fencing/train_fencing_strategy.sh +strategy.iters=3000`
+(writes `fencing_strategy_v7/`). **Record:** `bash scripts/fencing/record_strategy.sh`
+(constant `win_frame_hit=5`, 5 consecutive bouts).
+
+**Outcome:** _(fill in — the key question: does `win_rate` finally leave 0? Watch it against the
+`win_frame_hit` ramp — expect touches to appear while it's low (1–2), then a possible dip as it
+climbs to 5. If `dense_return` rises but `win_rate` stays 0, it's hovering the tip, not scoring →
+lower `dense_mix` or gate hit on closing. If touches vanish entirely once win_frame_hit hits 5,
+5 is unreachable for this low-level and épée-targets / a lower end value is the next lever.)_
+
+---
+
+## strategy-v6.3: FIRST VALID run (v6 config + the env-reset fix)
 
 **Identical configuration to v6 / v6.2** (`win_frame_hit=5`, `dense_mix=0.05`, `time_pen_w=0.005`,
 contact penalty + body-contact termination, drills-v8 low-level, fresh, 3000 iters) — written to

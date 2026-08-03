@@ -245,6 +245,7 @@ def train(cfg, task, env):
                 "strategy/oob_end_rate": oob_count / e,              # learner out of bounds
                 "strategy/timeout_rate": timeout_count / e,          # draw / opponent OOB
                 "strategy/mean_bout_len": boutlen_sum / max(boutlen_cnt, 1),  # physics steps
+                "strategy/win_frame_hit": float(task.win_frame_hit),          # curriculum value
                 "strategy/policy_entropy": ent.item(),
                 "strategy/value_loss": v_loss.item(),
                 "strategy/contact_penalty": ep_contact.mean().item(),

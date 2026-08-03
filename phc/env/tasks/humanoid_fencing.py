@@ -343,6 +343,9 @@ class HumanoidFencing(humanoid_amp_task.HumanoidAMPTask):
             self.rew_buf[i*self.num_envs:(i+1)*self.num_envs] = reward
 
             if i == 0:
+                # stash the learner's raw reward components [vel,facing,strike,terminate,hit]
+                # so the strategy env can build an offense-only dense signal (see macro_step).
+                self._last_reward_raw = reward_raw
                 # --- W&B per-component logging (every 32 steps ≈ 1 rl_games epoch) ---
                 if not hasattr(self, '_reward_acc'):
                     self._reward_acc = {'vel': 0., 'facing': 0., 'strike': 0., 'terminate': 0., 'hit': 0., 'total': 0.}
