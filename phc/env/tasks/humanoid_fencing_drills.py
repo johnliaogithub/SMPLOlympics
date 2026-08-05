@@ -73,6 +73,10 @@ class HumanoidFencingDrills(HumanoidFencing):
         # Pelvis->Chest vector is the "spine" direction, used for the upright posture term.
         self._pelvis_id = self._build_key_body_ids_tensor(["Pelvis"])
         self._chest_id = self._build_key_body_ids_tensor(["Chest"])
+        # Non-sword arm (sword is on R_Hand). In fencing the FREE arm stays behind, not raised
+        # forward into the strike zone / used to block. arm_back_pen penalizes it coming forward.
+        self._left_hand_id = self._build_key_body_ids_tensor(["L_Hand"])
+        self.arm_back_w = cfg["env"].get("arm_back_pen", 0.0)
 
         # Per-env drill assignment. Agent 0 = learner drill, agent 1 = opponent drill.
         self.drill_ids = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
@@ -375,7 +379,15 @@ class HumanoidFencingDrills(HumanoidFencing):
         # of striking. The lunge keeps form via its own (gated) thrust/aim terms.
         lunge_mask = (drill_ids == D_LUNGE_UPPER) | (drill_ids == D_LUNGE_GROIN)
         posture_bonus = 0.15 * posture_r * (~lunge_mask).float()
-        return all_r.gather(-1, drill_ids[:, None]).squeeze(-1) + posture_bonus
+
+        # NON-SWORD ARM BACK (all drills): penalize the left hand being forward of the chest
+        # toward the opponent — i.e. raised into the strike zone or used to block. In real
+        # fencing the free arm stays behind; a proper lunge also throws the rear arm back, so
+        # this reinforces form everywhere. Normalized by 0.3 m of forward reach, capped at 1.
+        lhand = self._rigid_body_pos_list[i][:, self._left_hand_id[0]]
+        lhand_fwd = torch.sum((lhand[:, 0:2] - chest_pos[:, 0:2]) * tar_dir, dim=-1)
+        arm_back_pen = self.arm_back_w * torch.clamp(lhand_fwd / 0.3, 0.0, 1.0)
+        return all_r.gather(-1, drill_ids[:, None]).squeeze(-1) + posture_bonus - arm_back_pen
 
     def _compute_reward(self, actions):
         sword_tip_pos_list = self.get_sword_tip_pos()

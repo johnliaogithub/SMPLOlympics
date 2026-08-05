@@ -35,7 +35,44 @@ first confirmation the fix works.
 
 ---
 
-## strategy-v7 — current: offense-only dense + win_frame_hit curriculum
+## strategy-v8 — current: new low-level (drills-v9) + win_frame_hit capped at 2
+
+**Built on:** `drills-v9` (the arm-back fix). Two changes from v7, both driven by the v7 data +
+iter-500 recording:
+
+**1. New low-level `drills-v9` (arm-back form fix).** v7 recordings showed the only scored touches
+landed on the opponent's *raised non-sword arm*, and the fencers settle into a circling standoff.
+That's a low-level form problem — the free (left) arm shouldn't be raised forward. drills-v9 adds
+`arm_back_pen` to keep it tucked (see DRILLS_CHANGELOG v9). strategy-v8's low-level checkpoint is
+`output/HumanoidIm/fencing_drills_v9/Humanoid.pth`.
+
+**2. win_frame_hit capped at 2 (was ramping to 5).** v7's curriculum is the smoking gun: `win_rate`
+was nonzero while win_frame_hit ≤ ~2.5 (peaking ~iter 500), then **collapsed to exactly 0 once it
+passed ~3 and the aggression decayed** — 5 cumulative on-target forceful frames is unreachable for
+the rigid-blade low-level (the iter-500 argmax policy scored only ~1/5 bouts even at 5). So the
+curriculum now ramps `win_frame_hit_start=1 → win_frame_hit=2` over 300k steps and STOPS at 2 (a
+single 33 ms frame already exceeds a real fencing touch, so 2 is plenty realistic). Recording also
+uses 2. This keeps wins frequent enough to reinforce aggression instead of eroding it.
+
+**Deliberately NOT épée targets.** We considered making the arm a valid target, but that legitimizes
+the exact arm-poking we're trying to remove; the drills-v9 posture fix takes the arm OUT of the
+strike zone instead. Revisit épée only if torso touches stay too rare after v9.
+
+Everything else carries from v7: offense-only dense (`strike+terminate+hit`, `dense_mix=0.05`),
+`time_pen_w=0.005`, contact penalty + body-contact termination, the env-reset fix.
+
+**Depends on drills-v9 being trained first.** Sequence: train drills-v9, then strategy-v8 on it.
+
+**Command:** `bash scripts/fencing/train_fencing_strategy.sh +strategy.iters=3000`
+(low-level defaults to drills-v9; writes `fencing_strategy_v8/`).
+**Record:** `bash scripts/fencing/record_strategy.sh`.
+
+**Outcome:** _(fill in — does the free arm stay back / do touches land on the TORSO now? does
+`win_rate` hold up instead of decaying (win_frame_hit stops at 2)? is the circling standoff broken?)_
+
+---
+
+## strategy-v7: offense-only dense + win_frame_hit curriculum
 
 **Built on:** `drills-v8`, on the reset-fixed env (v6.3 was the first valid run). v6.3's clean
 data exposed the real problem: `win_rate = loss_rate = 0` for the ENTIRE run — the policy

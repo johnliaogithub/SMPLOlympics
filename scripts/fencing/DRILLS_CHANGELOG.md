@@ -10,7 +10,35 @@ config flags (logged to W&B) rather than code replacements. See v5.
 
 ---
 
-## v8 — current: dodge-focused fine-tune (warm-started from v7)
+## v9 — current: non-sword arm BACK (fencing form fix, warm-started from v8)
+
+**Motivation:** strategy-v7 recordings showed a bad low-level habit — the agents **raise the
+non-sword (left) arm forward** and use it to block; the only touches that landed hit that raised
+arm, not the torso. In real fencing the free arm stays *behind*. This is a low-level form problem,
+so we fix it in the drills rather than the strategy.
+
+- **New experiment dir `fencing_drills_v9`**, seeded by copying all of `fencing_drills_v8/*.pth`
+  (v8 trained to epoch 56000). Resumes from 56000. `fencing_drills_v8/` left FROZEN.
+- **New reward term `arm_back_pen` (`+env.arm_back_pen=0.5`), applied to EVERY drill.** Penalizes
+  the left hand (`L_Hand`; sword is on `R_Hand`) being forward of the chest toward the opponent:
+  `pen = 0.5 · clamp(dot(L_Hand−Chest, tar_dir) / 0.3, 0, 1)`. Zero when the free arm is at/behind
+  the chest (natural stance), ramps to full when it's ≥0.3 m forward (raised into the strike zone /
+  blocking). A real lunge throws the rear arm back too, so this reinforces form across all drills.
+- Same as v8 otherwise (warm-start; checkpoint/config version, not a code-structure change).
+
+**Command:** `bash scripts/fencing/train_fencing_drills.sh B
+learning.params.config.max_epochs=62000`  (phase B = all drills, so the arm form is fixed across
+the whole set; resumes from the copied epoch-56000 checkpoint, +6000).
+
+**Watch:** does the free arm actually tuck back in a v9 recording? Guard that the arm penalty
+doesn't distort the lunge (the sword arm is R_Hand, unaffected) or make dodge stiff. If the arm
+stays raised, raise `arm_back_pen`; if the agent contorts to keep it back, lower it.
+
+**Outcome:** _(fill in after training)_
+
+---
+
+## v8: dodge-focused fine-tune (warm-started from v7)
 
 **Motivation:** dodge never learned under v7 (phase B, dodge at equal weight). Note: this is
 NOT related to the strategy-net `win_frame_hit=45` bug — the drills use the *instantaneous*
