@@ -73,9 +73,10 @@ class HumanoidFencingDrills(HumanoidFencing):
         # Pelvis->Chest vector is the "spine" direction, used for the upright posture term.
         self._pelvis_id = self._build_key_body_ids_tensor(["Pelvis"])
         self._chest_id = self._build_key_body_ids_tensor(["Chest"])
-        # Non-sword arm (sword is on R_Hand). In fencing the FREE arm stays behind, not raised
-        # forward into the strike zone / used to block. arm_back_pen penalizes it coming forward.
-        self._left_hand_id = self._build_key_body_ids_tensor(["L_Hand"])
+        # Non-sword arm chain (sword is on R_Hand). Penalize ANY of shoulder/elbow/hand coming
+        # forward, so the agent can't game a hand-only penalty by tucking the hand into the armpit
+        # while the elbow still juts forward. In fencing the whole free arm stays behind.
+        self._left_arm_ids = self._build_key_body_ids_tensor(["L_Shoulder", "L_Elbow", "L_Hand"])
         self.arm_back_w = cfg["env"].get("arm_back_pen", 0.0)
 
         # Per-env drill assignment. Agent 0 = learner drill, agent 1 = opponent drill.
@@ -380,13 +381,15 @@ class HumanoidFencingDrills(HumanoidFencing):
         lunge_mask = (drill_ids == D_LUNGE_UPPER) | (drill_ids == D_LUNGE_GROIN)
         posture_bonus = 0.15 * posture_r * (~lunge_mask).float()
 
-        # NON-SWORD ARM BACK (all drills): penalize the left hand being forward of the chest
-        # toward the opponent — i.e. raised into the strike zone or used to block. In real
-        # fencing the free arm stays behind; a proper lunge also throws the rear arm back, so
-        # this reinforces form everywhere. Normalized by 0.3 m of forward reach, capped at 1.
-        lhand = self._rigid_body_pos_list[i][:, self._left_hand_id[0]]
-        lhand_fwd = torch.sum((lhand[:, 0:2] - chest_pos[:, 0:2]) * tar_dir, dim=-1)
-        arm_back_pen = self.arm_back_w * torch.clamp(lhand_fwd / 0.3, 0.0, 1.0)
+        # NON-SWORD ARM BACK (all drills): penalize the FORWARD-MOST of shoulder/elbow/hand being
+        # forward of the chest toward the opponent — i.e. the free arm raised into the strike zone
+        # or used to block. Using the whole chain (max) stops the armpit-tuck game (hand back,
+        # elbow forward). In real fencing the free arm stays behind; a proper lunge throws the rear
+        # arm back too, so this reinforces form everywhere. Normalized by 0.3 m forward, capped at 1.
+        arm_pos = self._rigid_body_pos_list[i][:, self._left_arm_ids]                 # (N, 3, 3)
+        arm_fwd = torch.sum((arm_pos[..., 0:2] - chest_pos[:, None, 0:2]) * tar_dir[:, None, :], dim=-1)  # (N, 3)
+        arm_fwd_max = arm_fwd.max(dim=-1).values                                      # forward-most joint
+        arm_back_pen = self.arm_back_w * torch.clamp(arm_fwd_max / 0.3, 0.0, 1.0)
         return all_r.gather(-1, drill_ids[:, None]).squeeze(-1) + posture_bonus - arm_back_pen
 
     def _compute_reward(self, actions):

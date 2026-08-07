@@ -20,10 +20,13 @@ so we fix it in the drills rather than the strategy.
 - **New experiment dir `fencing_drills_v9`**, seeded by copying all of `fencing_drills_v8/*.pth`
   (v8 trained to epoch 56000). Resumes from 56000. `fencing_drills_v8/` left FROZEN.
 - **New reward term `arm_back_pen` (`+env.arm_back_pen=0.5`), applied to EVERY drill.** Penalizes
-  the left hand (`L_Hand`; sword is on `R_Hand`) being forward of the chest toward the opponent:
-  `pen = 0.5 · clamp(dot(L_Hand−Chest, tar_dir) / 0.3, 0, 1)`. Zero when the free arm is at/behind
-  the chest (natural stance), ramps to full when it's ≥0.3 m forward (raised into the strike zone /
-  blocking). A real lunge throws the rear arm back too, so this reinforces form across all drills.
+  the FORWARD-MOST of the non-sword arm chain (`L_Shoulder`, `L_Elbow`, `L_Hand`; sword is on
+  `R_Hand`) being forward of the chest toward the opponent:
+  `pen = 0.5 · clamp(max_j dot(joint_j−Chest, tar_dir) / 0.3, 0, 1)`. Zero when the free arm is
+  at/behind the chest (natural stance), ramps to full when any joint is ≥0.3 m forward (raised into
+  the strike zone / blocking). Uses the whole chain (not just the hand) because a hand-only penalty
+  was gamed by tucking the hand into the armpit while the elbow juts forward. A real lunge throws
+  the rear arm back too, so this reinforces form across all drills.
 - Same as v8 otherwise (warm-start; checkpoint/config version, not a code-structure change).
 
 **Command:** `bash scripts/fencing/train_fencing_drills.sh B
