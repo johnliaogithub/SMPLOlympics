@@ -61,7 +61,14 @@ class HumanoidFencing(humanoid_amp_task.HumanoidAMPTask):
         # Default 45 (~1.5s of forceful contact) is near-impossible for a quick thrust; override
         # low (e.g. 5) so a committed touch actually scores. Logged in W&B config.
         self.win_frame_hit = cfg["env"].get("win_frame_hit", 45)
-        
+        # Hit geometry. Default (tip-only, 0.1 m) = foil/epee thrust to the body CENTER, which
+        # misses mid-blade "cut" contacts and lateral (rib) touches. hit_use_blade=True measures
+        # the whole BLADE segment (hand->tip) to the target, so any blade contact counts (sabre-
+        # like); hit_dist widens the gate to reach the body SURFACE, not just its center. The
+        # >50N force check still guards against phantom hits either way.
+        self.hit_use_blade = cfg["env"].get("hit_use_blade", False)
+        self.hit_dist = cfg["env"].get("hit_dist", 0.1)
+
         ########## building for boxing area ##########
         self.bounding_box = torch.tensor([-1, 1, -7, 7,]).to(self.device) # x_min, x_max, y_min, y_max
         self.bounding_box_points = torch.tensor([[[-1, -7, 0], [1, 7, 0]]]).repeat(self.num_envs, 1, 1).to(self.device)
@@ -233,8 +240,18 @@ class HumanoidFencing(humanoid_amp_task.HumanoidAMPTask):
         for i in range(self.num_agents):
             sword_tip_pos = sword_tip_pos_list[i] # my sword tip
             target_pos = self._rigid_body_pos_list[1 - i][:, self._target_ids] # hit target pos
-            dist = torch.linalg.norm(sword_tip_pos - target_pos, dim=-1)
-            distance_check =  dist < 0.1
+            if self.hit_use_blade:
+                # distance from each target to the whole BLADE SEGMENT (hand -> tip), so a
+                # mid-blade contact counts, not only a tip thrust. Point-to-segment distance.
+                a = self._rigid_body_pos_list[i][:, self._hand_ids]      # (N,1,3) blade base
+                ab = sword_tip_pos - a                                   # (N,1,3)
+                ap = target_pos - a                                      # (N,k,3)
+                t = (ap * ab).sum(-1) / (ab * ab).sum(-1).clamp_min(1e-6)   # (N,k)
+                closest = a + t.clamp(0.0, 1.0)[..., None] * ab          # (N,k,3)
+                dist = torch.linalg.norm(target_pos - closest, dim=-1)   # (N,k)
+            else:
+                dist = torch.linalg.norm(sword_tip_pos - target_pos, dim=-1)  # tip only (N,k)
+            distance_check =  dist < self.hit_dist
             contact_check = torch.norm(self._contact_forces_list[1 - i][:, self._target_ids], dim = -1) > 50
             
             sword_hit = torch.any(torch.logical_and(distance_check, contact_check), dim = -1)[:, None] # my sowrd hit. 

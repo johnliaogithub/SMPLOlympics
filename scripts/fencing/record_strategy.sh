@@ -19,7 +19,7 @@ if [[ -z "$CUDA_VISIBLE_DEVICES" ]]; then
         --format=csv,noheader,nounits | sort -t, -k2 -nr | head -1 | cut -d, -f1 | tr -d ' ')
 fi
 
-STRATEGY="${1:-output/HumanoidIm/fencing_strategy_v8/strategy.pth}"
+STRATEGY="${1:-output/HumanoidIm/fencing_strategy_v9/strategy.pth}"
 LOW_LEVEL="${2:-output/HumanoidIm/fencing_drills_v9/Humanoid.pth}"
 echo "[record] strategy: ${STRATEGY}"
 echo "[record] low-level: ${LOW_LEVEL}"
@@ -42,6 +42,8 @@ python phc/visualize_strategy.py \
     env.episode_length=175 \
     +env.macro_K=15 \
     +env.win_frame_hit=2 \
+    +env.hit_use_blade=True \
+    +env.hit_dist=0.15 \
     "+env.low_level_checkpoint=${LOW_LEVEL}" \
     "+env.strategy_checkpoint=${STRATEGY}" \
     +env.clip_len=600

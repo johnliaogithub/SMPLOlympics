@@ -35,7 +35,39 @@ first confirmation the fix works.
 
 ---
 
-## strategy-v8 — current: new low-level (drills-v9) + win_frame_hit capped at 2
+## strategy-v9 — current: BLADE-contact hit detection (same drills-v9 low-level)
+
+**Built on:** `drills-v9` (unchanged — same low-level as v8). Identical strategy config to v8
+(offense-only dense `dense_mix=0.05`, `time_pen_w=0.005`, contact penalty + body-contact
+termination, win_frame_hit ramp 1→2). The one change is the **hit detector**.
+
+**Motivation.** Watching v8, the swords visibly touched the opponent (most often the mid-blade on
+the rib-side) but nothing scored. Root cause in `check_sword_hit`: it only tested the sword TIP
+against target-body CENTERS within 0.1 m — so mid-blade "cut" contacts (tip is elsewhere) and
+lateral flank touches (>0.1 m from the interior center) never registered, even though the blade
+was physically in contact with >50 N of force.
+
+**Change (`+env.hit_use_blade=True`, `+env.hit_dist=0.15`).** Hit distance is now measured from
+each target to the WHOLE BLADE SEGMENT (hand→tip), so any blade contact counts (sabre-like, not
+tip-only foil/épée), and the gate widened to 0.15 m to reach the body surface. The >50 N force
+check is unchanged, so phantom hits are still rejected. Applied consistently in training AND
+recording (all four fencing scripts) to avoid a train/eval mismatch.
+
+**Watch — this is a lever, not a final rule.** Scoring is now much easier; the opposite failure is
+that the agent learns to FLAIL/slash the blade rather than lunge. If `win_rate` shoots up and the
+recording looks like slashing, tighten `hit_dist` toward 0.10 or set `hit_use_blade=False` (back to
+thrust-only). win_frame_hit stays capped at 2; if blade-hits make 2 trivially easy, it can be raised
+for a cleaner touch requirement.
+
+**Command:** `bash scripts/fencing/train_fencing_strategy.sh +strategy.iters=3000`
+(low-level drills-v9; writes `fencing_strategy_v9/`). **Record:** `bash scripts/fencing/record_strategy.sh`.
+
+**Outcome:** _(fill in — do the touches you SEE finally register as wins? does `win_rate` lift off
+0, and is it real fencing or blade-flailing?)_
+
+---
+
+## strategy-v8: new low-level (drills-v9) + win_frame_hit capped at 2
 
 **Built on:** `drills-v9` (the arm-back fix). Two changes from v7, both driven by the v7 data +
 iter-500 recording:
