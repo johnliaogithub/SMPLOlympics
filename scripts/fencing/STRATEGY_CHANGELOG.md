@@ -35,6 +35,40 @@ first confirmation the fix works.
 
 ---
 
+## strategy-v10 — current: THRUST-only hit (point-first, no slaps)
+
+**Built on:** `drills-v9` (unchanged low-level). Same strategy config as v8/v9; the only change is
+the hit detector, tightened from v9.
+
+**Motivation.** v9's blade-contact detector (`hit_use_blade=True`, 0.15 m) made *every* match end in
+a win — but all of them were **slaps**: the flat/side of the blade against the side of the opponent,
+not point thrusts. v9 was the sabre over-correction to v6/v7's "tip never lands."
+
+**Change (`hit_use_blade=False`, `hit_dist=0.15`, `tip_lead_margin=0.06`).** Two-part rule now:
+1. **Tip-only distance** — the sword TIP (not the mid-blade) must be within 0.15 m of a target body
+   (targets are the whole torso column Pelvis/Torso/Spine/Chest/Neck/Head, so a flank thrust has a
+   nearby target). A broadside slap has the tip off to the side, so it fails.
+2. **Thrust discriminator (`tip_lead_margin`)** — additionally require the tip to be ~the CLOSEST
+   point of the blade to the target: `tip_dist − blade_segment_dist < 0.06`. A real thrust leads with
+   the point (tip is closest → passes); a slap has the mid-blade closest and the tip elsewhere
+   (fails), even in the edge case where a slap's tip grazes within 0.15 m.
+The `>50 N` force check is unchanged. `hit_dist` was kept at 0.15 (reach the body SURFACE, not the
+0.10-to-CENTER that missed flank touches). Config `tip_lead_margin` is new (default 1e9 = disabled).
+
+**The dial we're now on:** tip-only 0.10 = nothing scores (v6/v7); blade 0.15 = everything is a slap
+(v9); this (tip-only 0.15 + thrust discriminator) aims for the middle — real point thrusts, incl.
+flank, count; slaps don't. If touches are again too RARE, the low-level can't thrust well (a drills
+problem, deferred by choice) — loosen `hit_dist`→0.18 or `tip_lead_margin`→0.10. If slaps still slip
+through, tighten `tip_lead_margin`→0.03.
+
+**Command:** `bash scripts/fencing/train_fencing_strategy.sh +strategy.iters=3000`
+(writes `fencing_strategy_v10/`). **Record:** `bash scripts/fencing/record_strategy.sh`.
+
+**Outcome:** _(fill in — are the scored touches now point-on-target thrusts, and is win_rate a
+sane middle value rather than 0 or ~1?)_
+
+---
+
 ## strategy-v9 — current: BLADE-contact hit detection (same drills-v9 low-level)
 
 **Built on:** `drills-v9` (unchanged — same low-level as v8). Identical strategy config to v8

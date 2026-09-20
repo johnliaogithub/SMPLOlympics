@@ -37,7 +37,7 @@ python phc/train_fencing_strategy.py \
     project_name=SMPLOlympics \
     num_agents=2 \
     learning=amp_z_self_play_no_disc \
-    exp_name=fencing_strategy_v9 \
+    exp_name=fencing_strategy_v10 \
     env=env_amp_z \
     env.num_envs=256 \
     env.task=HumanoidFencingStrategyZ \
@@ -56,6 +56,7 @@ python phc/train_fencing_strategy.py \
     +env.win_frame_hit=2 \
     +env.win_frame_hit_start=1 \
     +env.win_frame_hit_ramp_steps=300000 \
-    +env.hit_use_blade=True \
+    +env.hit_use_blade=False \
     +env.hit_dist=0.15 \
+    +env.tip_lead_margin=0.06 \
     "$@"

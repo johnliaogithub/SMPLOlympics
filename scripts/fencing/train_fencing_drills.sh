@@ -112,8 +112,9 @@ python phc/run_hydra.py \
     +env.strike_spawn_half_dist=1.0 \
     '+env.lunge_weights={posture:0.30}' \
     +env.arm_back_pen=0.5 \
-    +env.hit_use_blade=True \
+    +env.hit_use_blade=False \
     +env.hit_dist=0.15 \
+    +env.tip_lead_margin=0.06 \
     learning.params.config.switch_frequency=1000000000 \
     learning.params.config.task_reward_w=1.0 \
     learning.params.config.disc_reward_w=0.0 \
