@@ -9,7 +9,7 @@
 export LD_LIBRARY_PATH=/pub0/johnliao/miniconda3/envs/isaac/lib:$LD_LIBRARY_PATH
 cd /pub0/johnliao/SMPLOlympics
 
-LOW_LEVEL="${1:-output/HumanoidIm/fencing_drills_v9/Humanoid.pth}"
+LOW_LEVEL="${1:-output/HumanoidIm/fencing_drills_v10/Humanoid.pth}"
 [[ $# -gt 0 ]] && shift   # consume the checkpoint arg so it isn't re-passed to hydra via "$@"
 echo "[viz] low-level policy: ${LOW_LEVEL}"
 
@@ -29,8 +29,9 @@ python phc/visualize_drills.py \
     headless=True \
     +record_video=True \
     env.episode_length=175 \
-    +env.strike_episode_length=90 \
+    +env.strike_episode_length=70 \
     +env.strike_spawn_half_dist=1.0 \
+    +env.dodge_duel=True \
     +env.hit_use_blade=False \
     +env.hit_dist=0.15 \
     +env.tip_lead_margin=0.06 \

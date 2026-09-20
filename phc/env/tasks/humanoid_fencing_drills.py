@@ -121,6 +121,13 @@ class HumanoidFencingDrills(HumanoidFencing):
         # recovery/stand reward. Set False to reproduce v4-and-earlier behavior where the
         # lunge episode ended immediately on the hit. Logged to W&B config per run.
         self.lunge_two_phase = cfg["env"].get("lunge_two_phase", True)
+        # DUELING DODGE (v10): the dodge drill becomes a real exchange. The learner both LUNGES
+        # (dense offense = the lunge reward) AND must avoid the opponent's lunge (sparse -im_hit);
+        # dodging EMERGES from not eating the counter (no farmable distance reward). Warm-start
+        # from a policy that can already lunge so the opponent is a real threat from step 0.
+        self.dodge_duel = cfg["env"].get("dodge_duel", False)
+        self.dodge_imhit_w = cfg["env"].get("dodge_imhit_w", 5.0)   # got-hit penalty weight
+        self.dodge_spawn_jitter = cfg["env"].get("dodge_spawn_jitter", 0.0)  # +/- m on spawn gap
 
         self._prev_head_pos_list = [torch.zeros([self.num_envs, 3], device=self.device, dtype=torch.float)
                                     for _ in range(self.num_agents)]
@@ -170,6 +177,13 @@ class HumanoidFencingDrills(HumanoidFencing):
         self._spawn_half_dist[env_ids] = torch.where(
             in_range, torch.full_like(self._spawn_half_dist[env_ids], self.strike_spawn_half_dist),
             torch.full_like(self._spawn_half_dist[env_ids], 1.5))
+        # slight spawn-gap randomization for strike drills so the duel can't memorize one fixed
+        # timing/exchange (only the gap; both agents stay symmetric about the centerline).
+        if self.dodge_spawn_jitter > 0:
+            jit = (torch.rand(n, device=self.device) * 2 - 1) * self.dodge_spawn_jitter
+            self._spawn_half_dist[env_ids] = torch.where(
+                in_range, (self._spawn_half_dist[env_ids] + jit).clamp_min(0.3),
+                self._spawn_half_dist[env_ids])
 
     def _reset_envs(self, env_ids):
         if len(env_ids) > 0:
@@ -371,7 +385,12 @@ class HumanoidFencingDrills(HumanoidFencing):
         r_stand = 0.60 * still_r + 0.20 * facing_r + 0.20 * head_stab_r  # stand WANTS stillness
         # dodge: NO head-stability term — it would penalize the very evasive motion
         # dodging requires. Reward keeping the opponent's tip away + staying oriented.
-        r_dodge = 0.60 * avoid_r + 0.40 * facing_r - 1.00 * im_hit
+        if self.dodge_duel:
+            # dense offense (the lunge reward: bring the tip to a target and land it) + sparse
+            # got-hit penalty. The dodge is implicit: avoid the opponent's touch while attacking.
+            r_dodge = lunge_reward(self._upper_target_ids) - self.dodge_imhit_w * im_hit
+        else:
+            r_dodge = 0.60 * avoid_r + 0.40 * facing_r - 1.00 * im_hit
 
         all_r = torch.stack([r_advance, r_retreat, r_stand, r_lunge_u, r_lunge_g,
                              r_dodge, r_step_left, r_step_right], dim=-1)
@@ -453,6 +472,11 @@ class HumanoidFencingDrills(HumanoidFencing):
         got_hit = self.sword_hit_list[1].squeeze(-1).bool()       # opponent hit agent 0
         dodge_mask = self.drill_ids == D_DODGE
         done = done | (dodge_mask & got_hit)
+        if self.dodge_duel:
+            # a touch by the LEARNER also ends the point (else it farms the +5 hit reward),
+            # mirroring got_hit ending it when the opponent touches.
+            learner_hit_d = self.sword_hit_list[0].squeeze(-1).bool()
+            done = done | (dodge_mask & learner_hit_d)
         # v4-and-earlier behavior: end the lunge episode immediately on the learner's hit.
         # (v5 two-phase keeps it running into the recovery phase instead.)
         if not self.lunge_two_phase:

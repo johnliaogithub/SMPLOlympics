@@ -10,7 +10,49 @@ config flags (logged to W&B) rather than code replacements. See v5.
 
 ---
 
-## v9 — current: non-sword arm BACK (fencing form fix, warm-started from v8)
+## v10 — current: DUELING dodge (dodge + lunge in conjunction, warm-started from v9)
+
+**Motivation:** dodge was the weakest drill — in isolation it's a one-sided, sparse reactive
+task and the old reward (`0.6*avoid_r + 0.4*facing - im_hit`) let the agent farm `avoid_r` by
+just standing far. Fix: make the dodge drill a real EXCHANGE where the learner both attacks and
+defends, so the dodge is learned in context.
+
+- **Reward (dodge drill, `+env.dodge_duel=True`):** `r_dodge = lunge_reward(upper_targets)
+  - dodge_imhit_w * im_hit`. Dense **offense** = the existing lunge reward (keeps it committing
+  to a real thrust), **sparse defense** = a per-frame "got touched" penalty (`dodge_imhit_w=5.0`).
+  The dodge EMERGES from avoiding the opponent's touch while attacking — no farmable distance
+  reward (the old `avoid_r`/`facing` are dropped for the duel). Matches real fencing: you read the
+  opponent's whole-body commitment (in the obs), not the sword tip.
+- **Opponent lunges** (option A): `_resample_drills` already sets the dodge opponent to lunge, so
+  there's a competent incoming threat from step 0 (v9's lunge is good; warm-started).
+- **Episode length 70** (`strike_episode_length` 90->70). VERIFIED: an isolated lunge lands at
+  ~episode_step 44 (median; range 41-61, measured from a lunge-only recording). 70 is long enough
+  for the incoming lunge to land + a counter, short enough that stalling/fleeing can't win (with
+  the OOB penalty kept). The episode also ends on a touch by EITHER fencer (a point ends it).
+- **Spawn-gap jitter** `dodge_spawn_jitter=0.2` (+/- 0.2 m) so the duel can't memorize one fixed
+  timing/exchange.
+- **New dir `fencing_drills_v10`**, seeded from `fencing_drills_v9/*.pth` (v9 at epoch 70000, left
+  FROZEN). Phase C (dodge-focused) so the duel is heavily sampled; lunges kept for the opponent's
+  threat + retention.
+
+**Command:** `bash scripts/fencing/train_fencing_drills.sh C
+learning.params.config.max_epochs=76000`  (resumes from the copied epoch-70000 checkpoint, +6000).
+**Record:** `bash scripts/fencing/record_fencing_drills.sh`.
+
+**Reward note (open fork):** offense is DENSE (lunge reward), defense is SPARSE (-im_hit). Dense
+offense is deliberate — a fully-sparse duel (+hit - got_hit) risks the passive standoff that sank
+the sparse strategy runs. To try fully-sparse instead, drop the lunge offense and reward only the
+sparse hit events.
+
+**Watch:** does a dodge motion actually emerge (agent evades the incoming lunge while landing its
+own), or does it just trade hits recklessly (raise `dodge_imhit_w`) / turtle and never attack
+(lower it)? Guard retention of the other drills.
+
+**Outcome:** _(fill in after training)_
+
+---
+
+## v9: non-sword arm BACK (fencing form fix, warm-started from v8)
 
 **Motivation:** strategy-v7 recordings showed a bad low-level habit — the agents **raise the
 non-sword (left) arm forward** and use it to block; the only touches that landed hit that raised
