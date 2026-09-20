@@ -81,8 +81,9 @@ def render_drills(cfg, task, low_level, out_path):
         task.drill_probs = probs
         task.reset()
 
+        prev_img = None
         for t in range(clip_len):
-            # Force the drill every step (survives any mid-clip auto-reset).
+            # Force the drill every step.
             task.drill_ids[:] = d
             task.opp_drill_ids[:] = opp
             task.opp_frozen[:] = (not is_dodge)
@@ -91,6 +92,14 @@ def render_drills(cfg, task, low_level, out_path):
             z0 = low_level(obs[:N], task.drill_ids)
             z1 = low_level(obs[N:2 * N], task.opp_drill_ids)
             task.step(torch.cat([z0, z1], dim=0))
+
+            # Episode ended (touch / timeout / fall): stop the live footage and HOLD the last live
+            # frame for the remaining frames, so every drill clip is the same total length
+            # (clip_len = drill + freeze) instead of shivering in the post-terminal state.
+            if bool(task.reset_buf[0].item()) and prev_img is not None:
+                for _ in range(clip_len - t):
+                    writer.append_data(label_frame(prev_img, f"{d}: {DRILL_NAMES[d]}", subtitle + "   [episode ended]"))
+                break
 
             # Side-on follow camera on agent 0.
             root = task._humanoid_root_states_list[0][0, 0:3].cpu().numpy()
@@ -107,6 +116,7 @@ def render_drills(cfg, task, low_level, out_path):
             img = img.reshape(img.shape[0], -1, 4)[..., :3]
 
             writer.append_data(label_frame(img, f"{d}: {DRILL_NAMES[d]}", subtitle))
+            prev_img = img
 
         print(f"[viz] rendered drill {d} ({DRILL_NAMES[d]})")
 
