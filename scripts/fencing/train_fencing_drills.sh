@@ -20,6 +20,10 @@
 export LD_LIBRARY_PATH=/pub0/johnliao/miniconda3/envs/isaac/lib:$LD_LIBRARY_PATH
 cd /pub0/johnliao/SMPLOlympics
 
+# smpl_local_robot writes the generated humanoid XML to /tmp/j73liao (hardcoded in
+# humanoid.py); a tmp-cleaner wipes it between runs -> FileNotFoundError on env creation. Recreate it.
+mkdir -p /tmp/j73liao
+
 # Shared box: auto-pick the GPU with the most free memory (override by setting
 # CUDA_VISIBLE_DEVICES yourself before calling this script).
 if [[ -z "$CUDA_VISIBLE_DEVICES" ]]; then

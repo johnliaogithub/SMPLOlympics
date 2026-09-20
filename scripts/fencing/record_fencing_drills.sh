@@ -9,6 +9,10 @@
 export LD_LIBRARY_PATH=/pub0/johnliao/miniconda3/envs/isaac/lib:$LD_LIBRARY_PATH
 cd /pub0/johnliao/SMPLOlympics
 
+# smpl_local_robot writes the generated humanoid XML to /tmp/j73liao (hardcoded in
+# humanoid.py); a tmp-cleaner wipes it between runs -> FileNotFoundError on env creation. Recreate it.
+mkdir -p /tmp/j73liao
+
 LOW_LEVEL="${1:-output/HumanoidIm/fencing_drills_v10/Humanoid.pth}"
 [[ $# -gt 0 ]] && shift   # consume the checkpoint arg so it isn't re-passed to hydra via "$@"
 echo "[viz] low-level policy: ${LOW_LEVEL}"
