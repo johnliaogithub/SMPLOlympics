@@ -47,6 +47,7 @@ def render(cfg, task, low_level, out_path):
         x0 = float(task._humanoid_root_states_list[0][0, 0].item())
         y0 = float(task._humanoid_root_states_list[0][0, 1].item())
         dx = dy = 0.0
+        scored = got_hit = False
         for t in range(max_steps):
             task.drill_ids[:] = D_DODGE
             task.opp_drill_ids[:] = target
@@ -55,6 +56,8 @@ def render(cfg, task, low_level, out_path):
             z0 = low_level(obs[:N], task.drill_ids)
             z1 = low_level(obs[N:2 * N], task.opp_drill_ids)
             task.step(torch.cat([z0, z1], dim=0))
+            if bool(task.sword_hit_list[0].any().item()): scored = True     # learner touched opp
+            if bool(task.sword_hit_list[1].any().item()): got_hit = True    # learner got touched
             lx = float(task._humanoid_root_states_list[0][0, 0].item())
             ly = float(task._humanoid_root_states_list[0][0, 1].item())
             dx, dy = lx - x0, ly - y0
@@ -74,15 +77,16 @@ def render(cfg, task, low_level, out_path):
             if bool(task.reset_buf[0].item()):
                 break
         side = "LEFT" if dx < -0.05 else ("RIGHT" if dx > 0.05 else "center")
-        summary.append((bout + 1, tname, round(dx, 2), round(dy, 2), side))
-        print(f"[bout {bout+1}] opp={tname}  dx={dx:+.2f}  dy={dy:+.2f}  -> {side}")
+        outcome = "SCORED" if (scored and not got_hit) else ("GOT-HIT" if (got_hit and not scored) else ("TRADE" if scored and got_hit else "no-touch"))
+        summary.append((bout + 1, tname, round(dx, 2), round(dy, 2), side, outcome))
+        print(f"[bout {bout+1}] opp={tname}  dx={dx:+.2f}  dy={dy:+.2f}  {side:6s}  {outcome}")
     writer.close()
     print("\n=== dodge-direction summary (dx = lateral, dy = along the strip) ===")
-    for b, tn, ddx, ddy, side in summary:
-        print(f"  bout {b:2d}  opp {tn:5s}  dx={ddx:+.2f}  dy={ddy:+.2f}  {side}")
-    lefts = sum(1 for *_, s in summary if s == "LEFT")
-    rights = sum(1 for *_, s in summary if s == "RIGHT")
-    print(f"  LEFT={lefts}  RIGHT={rights}  center={len(summary)-lefts-rights}")
+    for b, tn, ddx, ddy, side, oc in summary:
+        print(f"  bout {b:2d}  opp {tn:5s}  dx={ddx:+.2f}  dy={ddy:+.2f}  {side:6s}  {oc}")
+    gh = sum(1 for *_, oc in summary if oc in ("GOT-HIT", "TRADE"))
+    sc = sum(1 for *_, oc in summary if oc in ("SCORED", "TRADE"))
+    print(f"  learner GOT HIT in {gh}/{len(summary)} bouts;  learner SCORED in {sc}/{len(summary)}")
     print(f"\n============ dodge eval saved to {out_path} ============")
 
 
