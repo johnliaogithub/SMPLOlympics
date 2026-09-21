@@ -128,6 +128,9 @@ class HumanoidFencingDrills(HumanoidFencing):
         self.dodge_duel = cfg["env"].get("dodge_duel", False)
         self.dodge_imhit_w = cfg["env"].get("dodge_imhit_w", 5.0)   # got-hit penalty weight
         self.dodge_spawn_jitter = cfg["env"].get("dodge_spawn_jitter", 0.0)  # +/- m on spawn gap
+        # per-env duel offense target (False=upper, True=groin): randomized so the counter isn't
+        # always the high thrust and both engage-high / engage-low get trained.
+        self._duel_target = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
 
         self._prev_head_pos_list = [torch.zeros([self.num_envs, 3], device=self.device, dtype=torch.float)
                                     for _ in range(self.num_agents)]
@@ -159,6 +162,7 @@ class HumanoidFencingDrills(HumanoidFencing):
         n = len(env_ids)
         new_drills = torch.multinomial(self.drill_probs, n, replacement=True)
         self.drill_ids[env_ids] = new_drills
+        self._duel_target[env_ids] = torch.rand(n, device=self.device) < 0.5   # duel offense: upper/groin
 
         opp = torch.full((n,), D_STAND, dtype=torch.long, device=self.device)
         dodge_mask = new_drills == D_DODGE
@@ -388,7 +392,9 @@ class HumanoidFencingDrills(HumanoidFencing):
         if self.dodge_duel:
             # dense offense (the lunge reward: bring the tip to a target and land it) + sparse
             # got-hit penalty. The dodge is implicit: avoid the opponent's touch while attacking.
-            r_dodge = lunge_reward(self._upper_target_ids) - self.dodge_imhit_w * im_hit
+            off_up = lunge_reward(self._upper_target_ids)
+            off_gr = lunge_reward(self._groin_target_ids)
+            r_dodge = torch.where(self._duel_target, off_gr, off_up) - self.dodge_imhit_w * im_hit
         else:
             r_dodge = 0.60 * avoid_r + 0.40 * facing_r - 1.00 * im_hit
 

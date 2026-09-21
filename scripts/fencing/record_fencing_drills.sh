@@ -13,7 +13,7 @@ cd /pub0/johnliao/SMPLOlympics
 # humanoid.py); a tmp-cleaner wipes it between runs -> FileNotFoundError on env creation. Recreate it.
 mkdir -p /tmp/j73liao
 
-LOW_LEVEL="${1:-output/HumanoidIm/fencing_drills_v10/Humanoid.pth}"
+LOW_LEVEL="${1:-output/HumanoidIm/fencing_drills_v11/Humanoid.pth}"
 [[ $# -gt 0 ]] && shift   # consume the checkpoint arg so it isn't re-passed to hydra via "$@"
 echo "[viz] low-level policy: ${LOW_LEVEL}"
 
@@ -36,6 +36,7 @@ python phc/visualize_drills.py \
     +env.strike_episode_length=70 \
     +env.strike_spawn_half_dist=1.0 \
     +env.dodge_duel=True \
+    +env.lateral_spawn_jitter=0.3 \
     +env.hit_use_blade=False \
     +env.hit_dist=0.15 \
     +env.tip_lead_margin=0.06 \

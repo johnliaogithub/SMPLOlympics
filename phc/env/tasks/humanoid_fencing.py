@@ -73,6 +73,9 @@ class HumanoidFencing(humanoid_amp_task.HumanoidAMPTask):
         # side) does NOT score. A hit needs (tip_dist - blade_segment_dist) < tip_lead_margin.
         # Default 1e9 = disabled.
         self.tip_lead_margin = cfg["env"].get("tip_lead_margin", 1e9)
+        # Lateral (x) spawn randomization: offset each fencer sideways at spawn so the incoming
+        # lunge isn't always the identical centerline shot and the defense must generalize. 0=off.
+        self.lateral_spawn_jitter = cfg["env"].get("lateral_spawn_jitter", 0.0)
 
         ########## building for boxing area ##########
         self.bounding_box = torch.tensor([-1, 1, -7, 7,]).to(self.device) # x_min, x_max, y_min, y_max
@@ -169,6 +172,9 @@ class HumanoidFencing(humanoid_amp_task.HumanoidAMPTask):
             old_root_rot = root_rot.clone()
             half = self._spawn_half_dist[env_ids]   # (n,) per-env spawn distance
             root_pos[:, 0] = 0.0
+            if self.lateral_spawn_jitter > 0:
+                # per-env, per-agent sideways offset so lunges arrive off the centerline (varied angle)
+                root_pos[:, 0] = (torch.rand(num_envs, device=self.device) * 2 - 1) * self.lateral_spawn_jitter
             if i%2 == 0:
                 root_pos[:, 1] = -half
                 root_rot[:] = torch.tensor([[0.    , 0.    , 0.7071, 0.7071]]).to(self.device)

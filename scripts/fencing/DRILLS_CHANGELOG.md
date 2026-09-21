@@ -10,7 +10,42 @@ config flags (logged to W&B) rather than code replacements. See v5.
 
 ---
 
-## v10 — current: DUELING dodge (dodge + lunge in conjunction, warm-started from v9)
+## v11 — current: dodge robustness — lateral spawns + randomized duel target (from v10)
+
+**Motivation:** the dodge-eval diagnostic confirmed the v10 dodge is *one-directional* — a
+consistent backward retreat to the same side, and weak against the LOW lunge. The retreat itself
+is fine (fencing is linear; breaking distance is the textbook defense, so we do NOT penalize it or
+force sideways dodging). The problem is it's overfit to one exact centerline, head-high lunge. v11
+makes the defense generalize.
+
+- **Lateral spawn randomization** (`+env.lateral_spawn_jitter=0.3`, base-env change): each fencer
+  spawns with a per-env sideways x-offset, so the incoming lunge arrives off the centerline / at a
+  varied angle (up to ~15-20 deg). The retreat/slip must then work from varied geometry instead of
+  the identical head-shot. Gated by the config (default 0 = old centerline spawn).
+- **Randomized learner duel target** (`_duel_target`, per env): the dueling-dodge offense is now
+  `where(duel_target, lunge_reward(groin), lunge_reward(upper))` instead of always upper — so the
+  counter isn't one canned high thrust, and (with the opponent already lunging up/low 50/50) both
+  engage-high and engage-low get trained. Fixes "no defense against lunge lower."
+- **New dir `fencing_drills_v11`**, seeded from `fencing_drills_v10/*.pth` (v10 at epoch 76000,
+  left FROZEN). Phase C (dodge-focused), warm-start.
+
+**Command:** `bash scripts/fencing/train_fencing_drills.sh C
+learning.params.config.max_epochs=82000`  (+6000 from the copied epoch-76000 checkpoint).
+**Verify:** `bash scripts/fencing/record_dodge_eval.sh` — want the defense to hold against BOTH
+upper and groin lunges across the randomized spawns (not a fixed one-sided retreat that only beats
+the head-shot).
+
+**Known, NOT fixed here (documented):** the lunge target shift — the *reward* targets the nearest
+of a body set while the *hit* uses the full torso column, so the upper lunge converges on the HEAD
+(nearest along the rising arc) and the low lunge scores on the TORSO (the pelvis is too low to
+reach). Emergent + a reward-target/hit-target mismatch, not a bug; narrow the target sets if a
+foil-style chest target is wanted later.
+
+**Outcome:** _(fill in after training)_
+
+---
+
+## v10: DUELING dodge (dodge + lunge in conjunction, warm-started from v9)
 
 **Motivation:** dodge was the weakest drill — in isolation it's a one-sided, sparse reactive
 task and the old reward (`0.6*avoid_r + 0.4*facing - im_hit`) let the agent farm `avoid_r` by
