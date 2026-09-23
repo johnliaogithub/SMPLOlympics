@@ -14,7 +14,7 @@ if [[ -z "$CUDA_VISIBLE_DEVICES" ]]; then
         --format=csv,noheader,nounits | sort -t, -k2 -nr | head -1 | cut -d, -f1 | tr -d ' ')
 fi
 
-LOW_LEVEL="${1:-output/HumanoidIm/fencing_drills_v11/Humanoid.pth}"
+LOW_LEVEL="${1:-output/HumanoidIm/fencing_drills_v12/Humanoid.pth}"
 [[ $# -gt 0 ]] && shift
 echo "[dodge-eval] low-level: ${LOW_LEVEL}"
 
@@ -36,9 +36,13 @@ python phc/visualize_dodge_eval.py \
     env.episode_length=175 \
     +env.strike_episode_length=70 \
     +env.strike_spawn_half_dist=1.0 \
-    +env.dodge_duel=True \
+    +env.dodge_duel=False \
+    +env.dodge_pure=True \
+    +env.dodge_parry_w=1.5 \
+    +env.dodge_footback_w=0.5 \
     +env.dodge_spawn_jitter=0.2 \
-    +env.lateral_spawn_jitter=0.3 \
+    +env.lateral_spawn_jitter=0.5 \
+    +env.heading_spawn_jitter=0.3 \
     +env.hit_use_blade=False \
     +env.hit_dist=0.15 \
     +env.tip_lead_margin=0.06 \

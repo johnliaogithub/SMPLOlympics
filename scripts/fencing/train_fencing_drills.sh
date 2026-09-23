@@ -44,7 +44,7 @@ fi
 # Lunge-only diagnostic gets its OWN experiment dir so it never touches v4.
 case "$PHASE" in
   L|l) EXP_NAME=fencing_lunge_only ;;
-  *)   EXP_NAME=fencing_drills_v11 ;;
+  *)   EXP_NAME=fencing_drills_v12 ;;
 esac
 OUTPUT_DIR=output/HumanoidIm/${EXP_NAME}
 
@@ -116,10 +116,14 @@ python phc/run_hydra.py \
     +env.strike_spawn_half_dist=1.0 \
     '+env.lunge_weights={posture:0.30}' \
     +env.arm_back_pen=0.5 \
-    +env.dodge_duel=True \
+    +env.dodge_duel=False \
+    +env.dodge_pure=True \
+    +env.dodge_parry_w=1.5 \
+    +env.dodge_footback_w=0.5 \
     +env.dodge_imhit_w=5.0 \
     +env.dodge_spawn_jitter=0.2 \
-    +env.lateral_spawn_jitter=0.3 \
+    +env.lateral_spawn_jitter=0.5 \
+    +env.heading_spawn_jitter=0.3 \
     +env.hit_use_blade=False \
     +env.hit_dist=0.15 \
     +env.tip_lead_margin=0.06 \

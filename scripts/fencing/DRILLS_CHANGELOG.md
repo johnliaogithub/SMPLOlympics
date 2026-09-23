@@ -10,7 +10,46 @@ config flags (logged to W&B) rather than code replacements. See v5.
 
 ---
 
-## v11 — current: dodge robustness — lateral spawns + randomized duel target (from v10)
+## v12 — current: PURE defensive dodge (parry/slip, no retreat; riposte = composition)
+
+**Motivation:** the v11 "dodge" was a malformed riposte — the agent stepped the rear (left) foot
+BACK while reaching the arm forward to touch. That's baked into the dueling reward: offense pulls
+the tip forward, `-im_hit` is most cheaply satisfied by retreating, and applied *simultaneously*
+they produce "back up + reach". A real riposte is sequential (parry, then step in). Fix: split the
+roles. Make `dodge` a PURE defensive action; the riposte becomes the STRATEGY composing
+`dodge -> lunge` (no new drill, so no obs-size change — and a pure dodge can't score, so it no
+longer dominates `lunge` in the strategy's choices).
+
+- **`dodge` reward (`+env.dodge_pure=True`), offense removed:**
+  `0.2*facing + dodge_parry_w*parry - dodge_imhit_w*im_hit - dodge_footback_w*foot_back`.
+  - **parry** (sparse, `dodge_parry_w=1.5`): +1/frame when the learner's blade (sampled hand/mid/
+    tip points) comes within `dodge_parry_dist=0.15 m` of the opponent's blade — an active,
+    non-farmable block signal (replaces the old farmable `avoid_r` distance reward).
+  - **rear-foot-back penalty** (`dodge_footback_w=0.5`): penalizes the LEFT (rear) foot drifting
+    backward from its spawn anchor (in the away-from-opponent direction). The torso may still lean
+    back a little and the agent may move forward — but it can't retreat by stepping the rear foot,
+    so the defense must be a parry/slip in place. Re-adds a per-agent `_left_foot_anchor_list`.
+  - `im_hit` (`dodge_imhit_w=5.0`): got-touched penalty (defense signal).
+- **More spawn randomization:** `lateral_spawn_jitter` 0.3->0.5 and new `heading_spawn_jitter=0.3`
+  (yaw) so lunges arrive from more varied lines — so the dodges aren't all identical.
+- **New dir `fencing_drills_v12`**, seeded from `fencing_drills_v11/*.pth` (v11 at epoch 82000,
+  FROZEN). Phase C, warm-start.
+
+**Command:** `bash scripts/fencing/train_fencing_drills.sh C
+learning.params.config.max_epochs=88000`  (+6000 from epoch 82000).
+**Verify:** `bash scripts/fencing/record_dodge_eval.sh` — success = defends WITHOUT stepping the
+rear foot back (parry/slip, ideally blade-on-blade), varied across the randomized spawns, and NOT
+reaching-while-retreating. (Riposte quality is then the strategy's job, tested later.)
+
+**Watch:** (1) parry-farming — holding blades together to farm `parry_r` (gate on the opponent
+lunging if seen); (2) pure-sparse learnability — if it won't learn from parry+im_hit alone, add a
+*gated* "keep opp tip off my targets when close" term (not the old far-farm). Warm-start should carry it.
+
+**Outcome:** _(fill in after training)_
+
+---
+
+## v11: dodge robustness — lateral spawns + randomized duel target (from v10)
 
 **Motivation:** the dodge-eval diagnostic confirmed the v10 dodge is *one-directional* — a
 consistent backward retreat to the same side, and weak against the LOW lunge. The retreat itself

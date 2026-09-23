@@ -76,6 +76,8 @@ class HumanoidFencing(humanoid_amp_task.HumanoidAMPTask):
         # Lateral (x) spawn randomization: offset each fencer sideways at spawn so the incoming
         # lunge isn't always the identical centerline shot and the defense must generalize. 0=off.
         self.lateral_spawn_jitter = cfg["env"].get("lateral_spawn_jitter", 0.0)
+        # Heading (yaw) spawn jitter: rotate each fencer a little so the lunge line varies. 0=off.
+        self.heading_spawn_jitter = cfg["env"].get("heading_spawn_jitter", 0.0)
 
         ########## building for boxing area ##########
         self.bounding_box = torch.tensor([-1, 1, -7, 7,]).to(self.device) # x_min, x_max, y_min, y_max
@@ -181,6 +183,11 @@ class HumanoidFencing(humanoid_amp_task.HumanoidAMPTask):
             else:
                 root_pos[:, 1] = half
                 root_rot[:] = torch.tensor([[0.    ,  0.    , -0.7071,  0.7071]]).to(self.device)
+            if self.heading_spawn_jitter > 0:
+                dyaw = (torch.rand(num_envs, device=self.device) * 2 - 1) * self.heading_spawn_jitter
+                yq = torch.zeros((num_envs, 4), device=self.device)
+                yq[:, 2] = torch.sin(dyaw / 2); yq[:, 3] = torch.cos(dyaw / 2)
+                root_rot[:] = quat_mul(yq, root_rot)
 
             # Keep dof_pos from the sampled motion frame (use a standing motion file).
             # Zeroing dof_pos gives the SMPL rest pose (T-pose, legs spread), which
