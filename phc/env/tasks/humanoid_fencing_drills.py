@@ -135,8 +135,8 @@ class HumanoidFencingDrills(HumanoidFencing):
         # reward = 0.2*facing + parry(sparse, blades touch) - imhit - rear(left)-foot-back penalty,
         # so the defense is a parry/slip in place, not a retreat.
         self.dodge_pure = cfg["env"].get("dodge_pure", False)
-        self.dodge_parry_w = cfg["env"].get("dodge_parry_w", 1.5)     # sparse blade-block reward
-        self.dodge_parry_dist = cfg["env"].get("dodge_parry_dist", 0.15)
+        self.dodge_evade_w = cfg["env"].get("dodge_evade_w", 1.0)        # reward keeping opp tip off my targets
+        self.dodge_evade_gate = cfg["env"].get("dodge_evade_gate", 1.5)  # ...only when opp root within this range
         self.dodge_footback_w = cfg["env"].get("dodge_footback_w", 0.5)  # rear-foot-retreat penalty
         self._left_foot_anchor_list = [torch.zeros((self.num_envs, 2), device=self.device)
                                        for _ in range(self.num_agents)]
@@ -401,20 +401,16 @@ class HumanoidFencingDrills(HumanoidFencing):
         # dodge: NO head-stability term — it would penalize the very evasive motion
         # dodging requires. Reward keeping the opponent's tip away + staying oriented.
         if self.dodge_pure:
-            # PURE parry/slip: block the opponent's blade + don't get hit, WITHOUT retreating.
-            a_hand = self._rigid_body_pos_list[i][:, self._hand_ids[0]]
-            a_tip = sword_tip_pos_list[i][:, 0]
-            o_hand = self._rigid_body_pos_list[1 - i][:, self._hand_ids[0]]
-            o_tip = sword_tip_pos_list[1 - i][:, 0]
-            a_pts = torch.stack([a_hand, 0.5 * (a_hand + a_tip), a_tip], dim=1)     # (N,3,3)
-            o_pts = torch.stack([o_hand, 0.5 * (o_hand + o_tip), o_tip], dim=1)
-            blade_dist = torch.linalg.norm(a_pts[:, :, None, :] - o_pts[:, None, :, :], dim=-1
-                                           ).reshape(a_pts.shape[0], -1).min(dim=-1).values
-            parry_r = (blade_dist < self.dodge_parry_dist).float()                  # sparse block
+            # PURE evasive slip: keep the opponent's tip OFF your targets by moving your BODY
+            # off-line -- NOT by reaching the blade forward and NOT by retreating. avoid_r rewards
+            # the tip being far from your targets; gate it on the opponent being in range so it
+            # can't be farmed from a distance (the old avoid_r failure), and add the rear-foot pin.
+            gap = torch.linalg.norm(root_pos[..., 0:2] - opp_root_pos[..., 0:2], dim=-1)
+            gate = (gap < self.dodge_evade_gate).float()
             lf_xy = self._rigid_body_pos_list[i][:, self._left_foot_id[0], 0:2]
             back_drift = torch.clamp_min(-torch.sum((lf_xy - self._left_foot_anchor_list[i]) * tar_dir, dim=-1), 0.0)
             foot_back_pen = torch.clamp(back_drift / 0.3, 0.0, 1.0)                 # rear foot stepped back
-            r_dodge = (0.2 * facing_r + self.dodge_parry_w * parry_r
+            r_dodge = (0.2 * facing_r + self.dodge_evade_w * avoid_r * gate
                        - self.dodge_imhit_w * im_hit - self.dodge_footback_w * foot_back_pen)
         elif self.dodge_duel:
             off_up = lunge_reward(self._upper_target_ids)

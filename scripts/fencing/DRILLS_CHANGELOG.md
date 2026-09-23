@@ -10,7 +10,37 @@ config flags (logged to W&B) rather than code replacements. See v5.
 
 ---
 
-## v12 — current: PURE defensive dodge (parry/slip, no retreat; riposte = composition)
+## v13 — current: pure dodge via gated SLIP (not parry); v11 warm-start; 3000-epoch test
+
+**Motivation:** v12's parry reward made the dodge reach its blade forward (see v12 outcome). Replace
+it with a signal that rewards moving the BODY off-line, never the blade forward.
+
+- **`dodge` reward (pure):** `0.2*facing + dodge_evade_w * avoid_r * gate - dodge_imhit_w*im_hit
+  - dodge_footback_w*foot_back`. `avoid_r = 1 - exp(-2*threat_dist)` rewards the opponent's tip being
+  FAR from your targets (i.e. you slipped the body off-line). **Gated** (`gate = gap <
+  dodge_evade_gate=1.5 m`) so it only pays when the opponent is actually in range — fixes the old
+  `avoid_r` far-farm (standing far no longer pays) AND, unlike the parry, it rewards moving the body,
+  not the blade. Parry term removed (`dodge_parry_*` -> `dodge_evade_w=1.0`, `dodge_evade_gate=1.5`).
+  Retreating turns the gate OFF (no reward) and trips the rear-foot penalty, so a slip beats a retreat.
+- **Warm-start from `fencing_drills_v11`** (NOT v12): v12 collapsed to forward-lunge, so it's a bad
+  base; v11's dodge (duel) is less committed to reaching forward. New dir `fencing_drills_v13`
+  seeded from v11 @ 82000.
+- **TEST RUN: 3000 epochs only** — just to see if the policy is trending the right way (slip, not
+  reach), before committing to a full run.
+
+**Command:** `bash scripts/fencing/train_fencing_drills.sh C
+learning.params.config.max_epochs=85000`  (+3000 from epoch 82000).
+**Verify:** `bash scripts/fencing/record_dodge_eval.sh` — success direction = blade does NOT extend
+forward, body slips off-line, `GOT-HIT` trending down, no rear-foot retreat.
+
+**Note:** if v11's forward-reach inertia is too strong to shed in 3000 epochs, warm-start instead
+from a pre-duel checkpoint (v9-era, where the dodge wasn't attacking at all).
+
+**Outcome:** _(fill in after the test run)_
+
+---
+
+## v12: PURE defensive dodge (parry/slip, no retreat; riposte = composition)
 
 **Motivation:** the v11 "dodge" was a malformed riposte — the agent stepped the rear (left) foot
 BACK while reaching the arm forward to touch. That's baked into the dueling reward: offense pulls
@@ -45,7 +75,12 @@ reaching-while-retreating. (Riposte quality is then the strategy's job, tested l
 lunging if seen); (2) pure-sparse learnability — if it won't learn from parry+im_hit alone, add a
 *gated* "keep opp tip off my targets when close" term (not the old far-farm). Warm-start should carry it.
 
-**Outcome:** _(fill in after training)_
+**Outcome:** FAILED — both fencers lunge forward. The offense removal + learner-hit-termination
+removal were correct, but the **parry reward backfired**: rewarding "your blade near the opponent's
+blade" (proximity) incentivizes extending your blade FORWARD to meet the incoming (lunging) blade,
+and with the rear-foot-back penalty blocking retreat, forward is the only way to close that gap. So
+the dodge reaches its sword out to "parry" — visually a lunge. Proximity is the wrong parry signal
+(a real parry deflects sideways, not a forward poke). Fixed in v13.
 
 ---
 
