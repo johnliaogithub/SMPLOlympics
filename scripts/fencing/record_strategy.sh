@@ -45,6 +45,7 @@ python phc/visualize_strategy.py \
     +env.hit_use_blade=False \
     +env.hit_dist=0.15 \
     +env.tip_lead_margin=0.06 \
+    +env.hit_swept=True \
     "+env.low_level_checkpoint=${LOW_LEVEL}" \
     "+env.strategy_checkpoint=${STRATEGY}" \
     +env.clip_len=600

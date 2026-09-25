@@ -10,6 +10,40 @@ config flags (logged to W&B) rather than code replacements. See v5.
 
 ---
 
+## ⚠️ ENVIRONMENT FIX — sword-tip TUNNELING in hit detection (affects ALL prior versions)
+
+**What:** `check_sword_hit` (base `humanoid_fencing.py`) sampled the virtual sword tip ONCE per
+30 Hz control step (`self.dt = control_freq_inv(2) × 1/60 = 33.3 ms`) and required that single tip
+snapshot to be within `hit_dist` (0.15 m, measured to the target CENTER) AND a >50 N PhysX contact —
+with NO CCD anywhere. So a fast thrust can cross a target's capture sphere entirely between two
+samples and register nothing ("tunneling"). BOTH gates leak: the 30 Hz distance snapshot (33 ms) and
+the 120 Hz contact force (thin blade, no CCD, 0.02 m contact offset).
+
+**Proof (measured — LUNGE_UPPER drill, drills-v13, 128 envs; `phc/measure_tip_speed.py`):**
+- Dead-center tunnel threshold: tip speed > 2·hit_dist/dt = **9.0 m/s** (lower for off-axis grazes).
+- Real lunge tip speed reaches **p99 ≈ 22 m/s**; **2.2%** of frames move the tip > one full capture
+  diameter (30 cm) in a single step.
+- Every REGISTERED hit happened at tip speed **≤ ~5 m/s** — the detector was BLIND to fast committed
+  thrusts and only "saw" slow lingering contact. This is the root cause of the blade-slap / slow-slug
+  reward-hacking we kept patching downstream (thrust-only `tip_lead_margin`, etc.).
+
+**Fix — `hit_swept` (single config bool; default False, scripts now set True):** the distance gate is
+also evaluated against the tip's SWEPT PATH over the last control step (point-to-segment,
+`prev_tip → cur_tip`), reset-safe (falls back to the instantaneous tip on any non-consecutive frame,
+so a segment never spans an episode reset). A thrust is required — tip moved > `swept_min_disp`
+(0.02 m) roughly along the blade axis (`align > swept_align_min` = 0.5) — so a broadside swing whose
+tip grazes past does NOT score, and a STILL sword near the body has ~zero tip motion so it stays
+silent (no phantom hits). The swept branch is geometric (no >50 N gate), so it also closes the
+contact-force leak for committed thrusts. Control rate is untouched → PULSE/drills unaffected.
+
+**Verified (same measurement, `hit_swept` False→True):** committed thrusts that reach a target and
+register a hit: **2.3% → 55.2%**; total registered hit-frames **+112%**.
+
+**Implication:** every scoring-dependent result before this (strategy scoring; the blade-slap→thrust
+saga; dodge "safety", since the opponent's fast lunges also tunneled) is confounded and should be
+re-evaluated with `hit_swept=True`. The env-reset-bug fix, passivity fixes, and footwork/spawn-
+randomization work are orthogonal and stand.
+
 ## v13 — current: pure dodge via gated SLIP (not parry); v11 warm-start; 3000-epoch test
 
 **Motivation:** v12's parry reward made the dodge reach its blade forward (see v12 outcome). Replace

@@ -8,6 +8,17 @@ Newest version on top.
 
 ---
 
+## ⚠️ ENVIRONMENT FIX — hit-detection tunneling (full write-up in DRILLS_CHANGELOG)
+
+The shared `check_sword_hit` sampled the sword tip once per 30 Hz control step with no CCD, so fast
+thrusts tunneled through targets unregistered — the detector only scored SLOW contact (measured: all
+registered hits at ≤ ~5 m/s tip speed, while real lunge tips reach ~20 m/s). This biased the STRATEGY
+net toward the slow-slug / blade-slap equilibrium and confounds all prior strategy scoring. Fixed
+with a swept tip-path test behind the single config bool `hit_swept` (now `True` in
+`train_fencing_strategy.sh`). Verified: committed-thrust registration 2.3% → 55.2%, total hit-frames
++112%. Any strategy version compared across this change is NOT apples-to-apples — retrain on the
+fixed detector.
+
 ## ⚠️ CRITICAL BUG FIX (invalidates strategy-v1 … v6.2) — missing env reset
 
 **Every strategy version up to and including v6.2 trained on broken environments.** The custom

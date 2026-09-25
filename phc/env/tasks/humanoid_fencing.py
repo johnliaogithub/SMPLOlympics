@@ -73,6 +73,20 @@ class HumanoidFencing(humanoid_amp_task.HumanoidAMPTask):
         # side) does NOT score. A hit needs (tip_dist - blade_segment_dist) < tip_lead_margin.
         # Default 1e9 = disabled.
         self.tip_lead_margin = cfg["env"].get("tip_lead_margin", 1e9)
+        # SWEPT-TIP (continuous) hit detection. The instantaneous check samples the tip once per
+        # 30 Hz control step, so a fast thrust (>~9 m/s) can cross a target's capture sphere entirely
+        # between samples and register nothing (tunneling). When hit_swept=True the distance gate is
+        # also evaluated against the tip's SWEPT PATH over the last control step (segment prev_tip->
+        # cur_tip), closing that gap without touching the control rate. A thrust is required (tip
+        # moving roughly along the blade axis) so a broadside swing whose tip grazes a target does
+        # not count; and because a fast pass may leave no lasting >50N contact, the swept branch is
+        # geometric (no force gate) -- a still sword near the body has ~zero tip motion so it stays
+        # silent. Single master toggle; the two thresholds only matter when it is on.
+        self.hit_swept = cfg["env"].get("hit_swept", False)
+        self.swept_align_min = cfg["env"].get("swept_align_min", 0.5)   # cos(tip velocity, blade axis)
+        self.swept_min_disp = cfg["env"].get("swept_min_disp", 0.02)    # m: min tip travel to be a thrust
+        self._swept_prev_tip_list = None                                # lazily set in check_sword_hit
+        self._swept_prev_progress = None
         # Lateral (x) spawn randomization: offset each fencer sideways at spawn so the incoming
         # lunge isn't always the identical centerline shot and the defense must generalize. 0=off.
         self.lateral_spawn_jitter = cfg["env"].get("lateral_spawn_jitter", 0.0)
@@ -254,6 +268,16 @@ class HumanoidFencing(humanoid_amp_task.HumanoidAMPTask):
     
     def check_sword_hit(self):
         sword_tip_pos_list = self.get_sword_tip_pos()
+        # Lazily seed swept-path state so the swept segment is a clean single-step continuation and
+        # never spans an episode reset.
+        if self.hit_swept:
+            if (self._swept_prev_tip_list is None) or (self._swept_prev_progress is None):
+                self._swept_prev_tip_list = [p.clone() for p in sword_tip_pos_list]
+                self._swept_prev_progress = self.progress_buf.clone()
+            # Frames that are NOT a clean +1 continuation (first frame, or the frame after a reset)
+            # fall back to the instantaneous tip, so no phantom cross-episode segment is ever swept.
+            fresh = (self.progress_buf != self._swept_prev_progress + 1)  # (N,)
+
         sword_hit_list = []
         for i in range(self.num_agents):
             sword_tip_pos = sword_tip_pos_list[i] # my sword tip
@@ -270,14 +294,37 @@ class HumanoidFencing(humanoid_amp_task.HumanoidAMPTask):
             # exclude broadside slaps: the tip must be ~the closest point of the blade (a thrust)
             distance_check = distance_check & ((tip_dist - seg_dist) < self.tip_lead_margin)
             contact_check = torch.norm(self._contact_forces_list[1 - i][:, self._target_ids], dim = -1) > 50
-            
-            sword_hit = torch.any(torch.logical_and(distance_check, contact_check), dim = -1)[:, None] # my sowrd hit. 
+            per_target = torch.logical_and(distance_check, contact_check)   # instantaneous hit (N,k)
+
+            if self.hit_swept:
+                # Swept tip path over the last control step: point-to-segment dist, prev_tip->cur_tip.
+                prev_tip = self._swept_prev_tip_list[i]
+                seg_a = torch.where(fresh[:, None, None], sword_tip_pos, prev_tip)   # (N,1,3)
+                sab = sword_tip_pos - seg_a                          # (N,1,3) tip displacement
+                sap = target_pos - seg_a                             # (N,k,3)
+                st = ((sap * sab).sum(-1) / (sab * sab).sum(-1).clamp_min(1e-9)).clamp(0.0, 1.0)   # (N,k)
+                swept_dist = torch.linalg.norm(target_pos - (seg_a + st[..., None] * sab), dim=-1) # (N,k)
+                disp = torch.linalg.norm(sab, dim=-1)                # (N,1) tip travel this step
+                blade = sword_tip_pos - a                            # (N,1,3) blade axis (hand->tip)
+                align = (sab * blade).sum(-1) / (disp.clamp_min(1e-9) * torch.linalg.norm(blade, dim=-1).clamp_min(1e-9))  # (N,1)
+                # Committed thrust: tip travelled far enough this step AND moved along the blade axis
+                # (tip-first), not sideways. Geometric only (no >50N gate) so it catches fast passes
+                # that leave no lasting contact force.
+                thrust = (disp > self.swept_min_disp) & (align > self.swept_align_min)   # (N,1)
+                swept_check = (swept_dist < self.hit_dist) & thrust  # (N,k) & (N,1) -> (N,k)
+                per_target = per_target | swept_check
+
+            sword_hit = torch.any(per_target, dim = -1)[:, None] # my sword hit.
             if flags.test and sword_hit.sum() > 0:
                 if i == 0: print("Green Hit")
                 if i == 1: print("Red Hit")
-            
+
             sword_hit_list.append(sword_hit)
-                
+
+        if self.hit_swept:
+            self._swept_prev_tip_list = [p.clone() for p in sword_tip_pos_list]
+            self._swept_prev_progress = self.progress_buf.clone()
+
         return sword_hit_list
     
     def check_game_state(self):
