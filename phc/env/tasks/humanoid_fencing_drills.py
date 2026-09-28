@@ -240,10 +240,28 @@ class HumanoidFencingDrills(HumanoidFencing):
 
     def _check_hit_subset(self, attacker_idx, target_body_ids):
         tip = self.get_sword_tip_pos()[attacker_idx]  # (N, 1, 3)
-        target_pos = self._rigid_body_pos_list[1 - attacker_idx][:, target_body_ids]
-        dist = torch.linalg.norm(tip - target_pos, dim=-1)
+        target_pos = self._rigid_body_pos_list[1 - attacker_idx][:, target_body_ids]   # (N,k,3)
+        tip_dist = torch.linalg.norm(tip - target_pos, dim=-1)                          # (N,k)
         contact = torch.norm(self._contact_forces_list[1 - attacker_idx][:, target_body_ids], dim=-1) > 50
-        return torch.any(torch.logical_and(dist < 0.1, contact), dim=-1)
+        per = torch.logical_and(tip_dist < self.hit_dist, contact)                      # instantaneous (N,k)
+        if self.hit_swept:
+            # Swept tip path over this control step. _prev_sword_tip_list is captured in
+            # pre_physics_step and reset in _reset_envs, so it is a clean, reset-safe single-step
+            # segment. Mirrors check_sword_hit (geometric + thrust-gated) so a fast committed thrust
+            # that tunnels the instantaneous snapshot still registers here -- otherwise the lunge's
+            # hit_r reward could never reward a fast thrust and the drill keeps learning slow contact.
+            seg_a = self._prev_sword_tip_list[attacker_idx].unsqueeze(1)                # (N,1,3)
+            sab = tip - seg_a                                                           # (N,1,3)
+            sap = target_pos - seg_a                                                    # (N,k,3)
+            st = ((sap * sab).sum(-1) / (sab * sab).sum(-1).clamp_min(1e-9)).clamp(0.0, 1.0)  # (N,k)
+            swept_dist = torch.linalg.norm(target_pos - (seg_a + st[..., None] * sab), dim=-1)  # (N,k)
+            disp = torch.linalg.norm(sab, dim=-1)                                       # (N,1)
+            hand = self._rigid_body_pos_list[attacker_idx][:, self._hand_ids]           # (N,1,3)
+            blade = tip - hand                                                          # (N,1,3)
+            align = (sab * blade).sum(-1) / (disp.clamp_min(1e-9) * torch.linalg.norm(blade, dim=-1).clamp_min(1e-9))  # (N,1)
+            thrust = (disp > self.swept_min_disp) & (align > self.swept_align_min)      # (N,1)
+            per = per | ((swept_dist < self.hit_dist) & thrust)                         # (N,k)
+        return torch.any(per, dim=-1)
 
     def _compute_drill_reward(self, i, drill_ids, sword_tip_pos_list):
         dt = self.dt
