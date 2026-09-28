@@ -10,6 +10,26 @@ config flags (logged to W&B) rather than code replacements. See v5.
 
 ---
 
+## v14 — retrain under the FIXED (swept) hit detector; v13 warm-start
+
+**Motivation:** v1–v13 all trained under the tunneling hit detector (see the ENVIRONMENT FIX entry
+below): fast committed thrusts didn't register, so the lunge learned SLOW contact. v14 is the first
+drills version trained with the detector fixed on BOTH paths — `hit_swept=True` (episode/win
+scoring) AND the lunge reward's own hit signal `_check_hit_subset` routed through the same swept,
+thrust-gated, geometric test (gated to `hit_dist=0.15`, was a hardcoded 0.1). So a fast thrust that
+reaches a target now earns `hit_r`.
+
+- **Only change vs v13: the hit detector (env), not the reward weights.** All drill rewards, phase-C
+  `drill_probs=[0.4,0.4,0.4,0.6,0.6,2.0,0.4,0.4]`, spawn jitter, foot/arm penalties are unchanged.
+- **Warm-start:** from v13 @ 84000 (weights + opponent `_op` snapshot copied into the v14 dir);
+  cumulative epoch counter continues. Launch: `bash scripts/fencing/train_fencing_drills.sh C
+  max_epochs=90000` (= +6000; raise for longer).
+- **Expectation / how to verify:** the lunge should shift from a slow reach toward a faster committed
+  thrust (its `explosive_r` + per-step time penalty no longer fight an unrewarding hit signal).
+  Confirm post-train with `phc/measure_tip_speed.py` — the registered-hit tip-speed distribution
+  should climb above the old ≤5 m/s ceiling. If the lunge stays stuck slow (warm-start basin), retry
+  warm-starting from v11 (pre-dodge-specialization) or a fresh phase A.
+
 ## ⚠️ ENVIRONMENT FIX — sword-tip TUNNELING in hit detection (affects ALL prior versions)
 
 **What:** `check_sword_hit` (base `humanoid_fencing.py`) sampled the virtual sword tip ONCE per

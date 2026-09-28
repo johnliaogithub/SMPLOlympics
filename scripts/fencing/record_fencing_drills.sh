@@ -13,7 +13,7 @@ cd /pub0/johnliao/SMPLOlympics
 # humanoid.py); a tmp-cleaner wipes it between runs -> FileNotFoundError on env creation. Recreate it.
 mkdir -p /tmp/j73liao
 
-LOW_LEVEL="${1:-output/HumanoidIm/fencing_drills_v13/Humanoid.pth}"
+LOW_LEVEL="${1:-output/HumanoidIm/fencing_drills_v14/Humanoid.pth}"
 [[ $# -gt 0 ]] && shift   # consume the checkpoint arg so it isn't re-passed to hydra via "$@"
 echo "[viz] low-level policy: ${LOW_LEVEL}"
 
