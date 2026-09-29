@@ -2,7 +2,11 @@
 # Train drill-conditioned fencing skills (low level of the HRL stack).
 #
 # Usage:
-#   bash train_fencing_drills.sh [phase] [extra hydra args...]
+#   bash train_fencing_drills.sh [phase] [+epochs] [extra hydra args...]
+#
+#   [+epochs] (optional bare integer, e.g. 6000): train this many epochs ON TOP OF
+#   the resumed checkpoint, i.e. stop at max_epochs = resume_epoch + N. Omit to run
+#   to the 10M default (until you kill it). Ignored if you pass max_epochs= yourself.
 #
 # phase (optional, default: A):
 #   A     — drills 0-4 only (advance, retreat, stand, lunge_upper, lunge_groin),
@@ -39,6 +43,13 @@ if [[ "$PHASE" =~ ^[ABCDLabcdl]$ ]] || [[ "$PHASE" == "fresh" ]]; then
     shift
 else
     PHASE="A"
+fi
+
+# Optional bare-integer epoch INCREMENT (e.g. `... C 6000`): trains +N epochs on top
+# of whatever checkpoint we resume from. Consumed here so it isn't passed to hydra.
+INCREMENT=""
+if [[ "$1" =~ ^[0-9]+$ ]]; then
+    INCREMENT="$1"; shift
 fi
 
 # Lunge-only diagnostic gets its OWN experiment dir so it never touches v4.
@@ -78,21 +89,39 @@ esac
 # test mode). epoch=N loads Humanoid_<N>.pth; epoch=-1 loads best Humanoid.pth;
 # epoch=0 starts fresh.
 CHECKPOINT_ARG="epoch=0"
+RESUME_EPOCH=0        # numeric epoch we resume from (for the +epochs feature)
+RESUME_UNKNOWN=0     # 1 when resuming from best Humanoid.pth (epoch not knowable here)
 if [[ "$PHASE" != "fresh" ]]; then
     LATEST_NUMBERED=$(ls ${OUTPUT_DIR}/Humanoid_[0-9]*.pth 2>/dev/null | grep -v "_op\.pth" | sort -V | tail -1)
     if [[ -n "$LATEST_NUMBERED" ]]; then
         N=$(basename "$LATEST_NUMBERED" .pth | sed 's/Humanoid_//')
         N=$((10#$N))   # strip leading zeros
         CHECKPOINT_ARG="epoch=${N}"
+        RESUME_EPOCH=${N}
         echo "[Checkpoint] Resuming from epoch ${N}: ${LATEST_NUMBERED}"
     elif [[ -f "${OUTPUT_DIR}/Humanoid.pth" ]]; then
         CHECKPOINT_ARG="epoch=-1"
+        RESUME_UNKNOWN=1
         echo "[Checkpoint] Resuming from best: ${OUTPUT_DIR}/Humanoid.pth"
     else
         echo "[Checkpoint] No checkpoint found — starting fresh."
     fi
 else
     echo "[Checkpoint] Fresh start (no checkpoint loaded)."
+fi
+
+# Translate the optional +epochs increment into the real (nested) hydra key.
+MAX_EPOCHS_ARG=""
+if [[ -n "$INCREMENT" ]]; then
+    if [[ "$*" == *max_epochs* ]]; then
+        echo "[Epochs] max_epochs passed explicitly; ignoring +${INCREMENT} increment."
+    elif [[ "$RESUME_UNKNOWN" == "1" ]]; then
+        echo "[Epochs] WARN: resuming from best (epoch unknown); cannot add +${INCREMENT}. Pass learning.params.config.max_epochs=<total> yourself."
+    else
+        TARGET=$((RESUME_EPOCH + INCREMENT))
+        MAX_EPOCHS_ARG="learning.params.config.max_epochs=${TARGET}"
+        echo "[Epochs] Training +${INCREMENT} from epoch ${RESUME_EPOCH} => stop at max_epochs=${TARGET}."
+    fi
 fi
 
 echo ""
@@ -134,4 +163,5 @@ python phc/run_hydra.py \
     learning.params.config.disc_reward_w=0.0 \
     ${DRILL_ARGS} \
     ${CHECKPOINT_ARG} \
+    ${MAX_EPOCHS_ARG} \
     "$@"
