@@ -138,6 +138,12 @@ class HumanoidFencingDrills(HumanoidFencing):
         self.dodge_evade_w = cfg["env"].get("dodge_evade_w", 1.0)        # reward keeping opp tip off my targets
         self.dodge_evade_gate = cfg["env"].get("dodge_evade_gate", 1.5)  # ...only when opp root within this range
         self.dodge_footback_w = cfg["env"].get("dodge_footback_w", 0.5)  # rear-foot-retreat penalty
+        # v15 OFF-THE-LINE dodge (takes priority over dodge_pure when set): reward the
+        # perpendicular offset of the body from the opponent's THRUST LINE (hand->tip), a dense
+        # slip gradient that avoid_r lacks (avoid_r = "tip far from body" is high by default at
+        # range, so it never pays for the actual slip). Closing is NOT penalized. Gated on range.
+        self.dodge_offline = cfg["env"].get("dodge_offline", False)
+        self.dodge_offline_scale = cfg["env"].get("dodge_offline_scale", 0.4)  # meters of offset for full reward
         self._left_foot_anchor_list = [torch.zeros((self.num_envs, 2), device=self.device)
                                        for _ in range(self.num_agents)]
 
@@ -418,7 +424,25 @@ class HumanoidFencingDrills(HumanoidFencing):
         r_stand = 0.60 * still_r + 0.20 * facing_r + 0.20 * head_stab_r  # stand WANTS stillness
         # dodge: NO head-stability term — it would penalize the very evasive motion
         # dodging requires. Reward keeping the opponent's tip away + staying oriented.
-        if self.dodge_pure:
+        if self.dodge_offline:
+            # v15: pay for getting the body OFF the opponent's thrust line (hand->tip, extended),
+            # not merely far from the tip. Perpendicular offset of the CLOSEST target to the line
+            # is the binding, always-informative slip signal. Gated on the opponent being in range
+            # (no far-farm); closing is NOT penalized. Keep the rear-foot-back pin and facing term.
+            gap = torch.linalg.norm(root_pos[..., 0:2] - opp_root_pos[..., 0:2], dim=-1)
+            gate = (gap < self.dodge_evade_gate).float()
+            opp_hand = self._rigid_body_pos_list[1 - i][:, self._hand_ids]          # (N,1,3)
+            line_dir = opp_tip - opp_hand                                           # (N,1,3) blade/thrust dir
+            line_dir = line_dir / torch.linalg.norm(line_dir, dim=-1, keepdim=True).clamp_min(1e-6)
+            ap = my_targets - opp_hand                                              # (N,k,3)
+            perp = torch.linalg.norm(ap - (ap * line_dir).sum(-1, keepdim=True) * line_dir, dim=-1)  # (N,k)
+            offline_r = torch.clamp(perp.min(dim=-1).values / self.dodge_offline_scale, 0.0, 1.0)    # (N,)
+            lf_xy = self._rigid_body_pos_list[i][:, self._left_foot_id[0], 0:2]
+            back_drift = torch.clamp_min(-torch.sum((lf_xy - self._left_foot_anchor_list[i]) * tar_dir, dim=-1), 0.0)
+            foot_back_pen = torch.clamp(back_drift / 0.3, 0.0, 1.0)                 # rear foot stepped back
+            r_dodge = (0.2 * facing_r + self.dodge_evade_w * offline_r * gate
+                       - self.dodge_imhit_w * im_hit - self.dodge_footback_w * foot_back_pen)
+        elif self.dodge_pure:
             # PURE evasive slip: keep the opponent's tip OFF your targets by moving your BODY
             # off-line -- NOT by reaching the blade forward and NOT by retreating. avoid_r rewards
             # the tip being far from your targets; gate it on the opponent being in range so it

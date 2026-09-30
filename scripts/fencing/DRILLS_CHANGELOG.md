@@ -10,6 +10,32 @@ config flags (logged to W&B) rather than code replacements. See v5.
 
 ---
 
+## v15 — dodge: OFF-THE-LINE reward (replaces avoid_r); v14 warm-start
+
+**Motivation:** v14's dodge got hit **9/10** under honest (swept) detection and moves **forward**
+(eval: dy>0, dx≈0) instead of slipping. Diagnosed with `phc/measure_avoid_r.py`: avoid_r ("opp tip
+far from my body") is **not** gameable-by-closing — it *falls* into the hit (214/215 episodes, slope
+-0.077/step, 0.76→0.18) because got-hit ends the episode before the agent can get inside the point.
+But it's a **weak** signal: high-by-default at range (per-episode mean avoid_r: got-hit 0.806 vs
+survived 0.835 — barely separable), so it gives almost no gradient toward the actual slip. The agent
+sits essentially **on** the thrust line (perpendicular offset only ~0.09–0.27 m into the hit).
+
+- **Change:** new `dodge_offline` reward branch (priority over `dodge_pure`). Rewards the
+  perpendicular offset of the learner's CLOSEST target from the opponent's thrust LINE (opp
+  hand→tip, extended): `offline_r = clamp(min_target perp / dodge_offline_scale(0.4 m), 0, 1)`,
+  gated on the opponent in range (gap<1.5 m). Dense, always-informative slip gradient that avoid_r
+  lacked. **Closing is NOT penalized** (a slip-and-close is valid — the one v14 success closed).
+  Keeps facing (0.2), im_hit (−5), and the rear-foot-back pin.
+- **Only reward change vs v14** (`dodge_pure`→`dodge_offline`); other drills, phase-C probs and
+  penalties unchanged; detector unchanged (hit_swept + swept `_check_hit_subset` from v14).
+- **Warm-start:** from v14 @ 90000. ⚠️ **Caveat:** v14's dodge is a forward-attacker, so v15
+  inherits that prior; the new dense off-line gradient should counter it, but if the forward drift
+  persists, warm-start from v11 / a locomotion base or go fresh (`measure_avoid_r.py` on v11/base
+  would confirm the prior's origin).
+- **Verify:** `measure_avoid_r.py` (off-LINE offset should grow, got-hit rate fall) +
+  `record_dodge_eval.sh` (dx should grow, GOT-HIT fall). Launch:
+  `bash scripts/fencing/train_fencing_drills.sh C 6000`.
+
 ## v14 — retrain under the FIXED (swept) hit detector; v13 warm-start
 
 **Motivation:** v1–v13 all trained under the tunneling hit detector (see the ENVIRONMENT FIX entry
