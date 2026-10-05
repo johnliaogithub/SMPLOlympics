@@ -144,6 +144,13 @@ class HumanoidFencingDrills(HumanoidFencing):
         # range, so it never pays for the actual slip). Closing is NOT penalized. Gated on range.
         self.dodge_offline = cfg["env"].get("dodge_offline", False)
         self.dodge_offline_scale = cfg["env"].get("dodge_offline_scale", 0.4)  # meters of offset for full reward
+        # Beyond the evade gate (opponent out of range) pay this constant offline value instead of 0, so
+        # merely closing the distance no longer unlocks reward (v15 paid 0.18/step out of range vs 0.82
+        # inside it, which drove the dodger forward). 0.0 = v15 behavior.
+        self.dodge_far_value = cfg["env"].get("dodge_far_value", 0.0)
+        # Explicit WIN for the dodge: bonus on the step the dodge episode times out without being hit
+        # (the only explicit outcome before was the -dodge_imhit_w loss). 0.0 = v15 behavior.
+        self.dodge_survive_bonus = cfg["env"].get("dodge_survive_bonus", 0.0)
         self._left_foot_anchor_list = [torch.zeros((self.num_envs, 2), device=self.device)
                                        for _ in range(self.num_agents)]
 
@@ -437,11 +444,16 @@ class HumanoidFencingDrills(HumanoidFencing):
             ap = my_targets - opp_hand                                              # (N,k,3)
             perp = torch.linalg.norm(ap - (ap * line_dir).sum(-1, keepdim=True) * line_dir, dim=-1)  # (N,k)
             offline_r = torch.clamp(perp.min(dim=-1).values / self.dodge_offline_scale, 0.0, 1.0)    # (N,)
+            # out of range: constant value instead of 0 (see dodge_far_value)
+            evade = torch.where(gap < self.dodge_evade_gate, offline_r, torch.full_like(offline_r, self.dodge_far_value))
+            # explicit win: survived to the strike-episode timeout without being hit
+            survived = ((self.strike_episode_length > 0) & (self.progress_buf >= self.strike_episode_length) & (im_hit < 0.5)).float()
             lf_xy = self._rigid_body_pos_list[i][:, self._left_foot_id[0], 0:2]
             back_drift = torch.clamp_min(-torch.sum((lf_xy - self._left_foot_anchor_list[i]) * tar_dir, dim=-1), 0.0)
             foot_back_pen = torch.clamp(back_drift / 0.3, 0.0, 1.0)                 # rear foot stepped back
-            r_dodge = (0.2 * facing_r + self.dodge_evade_w * offline_r * gate
-                       - self.dodge_imhit_w * im_hit - self.dodge_footback_w * foot_back_pen)
+            r_dodge = (0.2 * facing_r + self.dodge_evade_w * evade
+                       - self.dodge_imhit_w * im_hit - self.dodge_footback_w * foot_back_pen
+                       + self.dodge_survive_bonus * survived)
         elif self.dodge_pure:
             # PURE evasive slip: keep the opponent's tip OFF your targets by moving your BODY
             # off-line -- NOT by reaching the blade forward and NOT by retreating. avoid_r rewards

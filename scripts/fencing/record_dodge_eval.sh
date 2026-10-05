@@ -14,7 +14,7 @@ if [[ -z "$CUDA_VISIBLE_DEVICES" ]]; then
         --format=csv,noheader,nounits | sort -t, -k2 -nr | head -1 | cut -d, -f1 | tr -d ' ')
 fi
 
-LOW_LEVEL="${1:-output/HumanoidIm/fencing_drills_v15/Humanoid.pth}"
+LOW_LEVEL="${1:-output/HumanoidIm/fencing_drills_v16/Humanoid.pth}"
 [[ $# -gt 0 ]] && shift
 echo "[dodge-eval] low-level: ${LOW_LEVEL}"
 

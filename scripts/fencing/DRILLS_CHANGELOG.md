@@ -10,6 +10,41 @@ config flags (logged to W&B) rather than code replacements. See v5.
 
 ---
 
+## v16 — dodge: constant out-of-range value, explicit win/lose dominant; v15 warm-start
+
+**Motivation:** v15's dodge still moved forward. The code and sim were verified correct
+(`phc/verify_dodge_reward.py`): the env reward matched an independent recomputation to 7e-7.
+The cause was the reward itself:
+- **The gate paid for closing in.** Bouts start 1.6–2.6 m apart, but the off-line term only paid
+  inside 1.5 m. That made reward 0.82/step in range vs 0.18/step out of range, so getting close was
+  worth 4.4x more per step.
+- **Win/lose was not the main signal.** Measured over 1,913 dodge episodes, surviving beat getting
+  hit by about 52 return, but the explicit hit penalty was only 5 of that (10%). The gated term alone
+  was ~31 per surviving episode, and there was no explicit win.
+
+**Changes:**
+- **`dodge_far_value=0.5`:** beyond the 1.5 m gate, pay a constant 0.5 (in off-line units) instead
+  of 0. That is about what an in-range dodger earns without really slipping (0.53), so closing in is
+  roughly neutral, while a real slip in range is still worth up to 1.0. The gate is kept because
+  distance matters.
+- **`dodge_evade_w` 1.0 → 0.2:** scales the off-line term down.
+- **Explicit win/lose:** `dodge_imhit_w` 5 → 20, plus the new `dodge_survive_bonus=20`, paid on the
+  step the 70-step dodge episode times out without a hit.
+- **`dodge_footback_w` 0.5 → 0.25:** keeps the anti-retreat pin, since out-of-bounds is ~6 m behind
+  the dodger and wouldn't stop a retreat. At 0.25 it no longer outweighs win/lose (up to -17.5/episode
+  vs -35).
+
+Re-scoring v15's behavior with these weights, the explicit win/lose share of the
+survive-vs-hit gap goes from 10% to 65%.
+
+**Not done (on purpose):** no per-step "changing offset" reward, since it invites left-right
+vibration. No explicit per-step survival reward either: per-step shaping is already positive, so it
+acts as one.
+
+- **Warm-start:** v15 @ 96000. Launch: `bash scripts/fencing/train_fencing_drills.sh C 6000`.
+- **Note:** the env-audit issues (`ENV_AUDIT.md`) are still unfixed. None of them drives the
+  forward drift.
+
 ## v15 — dodge: OFF-THE-LINE reward (replaces avoid_r); v14 warm-start
 
 **Motivation:** v14's dodge got hit **9/10** under honest (swept) detection and moves **forward**
