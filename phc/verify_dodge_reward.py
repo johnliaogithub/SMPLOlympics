@@ -54,23 +54,29 @@ def run(task, low, T=200):
     print("[R5] total dodge reward per step: gate ON mean=%.3f   gate OFF mean=%.3f   (difference = pay for being within %.1f m)" % (rg.mean(), rn.mean(), task.dodge_evade_gate))
 
 
+SIG = [0.0, 0.0]
 @torch.no_grad()
-def episode_budget(task, low, T=300):
+def episode_budget(task, low, T=300, low_opp=None):
+    low_opp = low_opp or low
     """Per dodge EPISODE: sum of the gated evade term, the hit penalty, and everything else."""
     dev = task.device; N = task.num_envs
     p = torch.zeros(NUM_DRILLS, device=dev); p[D_DODGE] = 1; task.drill_probs = p
     task.step_counter = task.warmup_time + 10; task.reset()
     tot = torch.zeros(N, device=dev); ev = torch.zeros(N, device=dev); hit = torch.zeros(N, device=dev); L = torch.zeros(N, device=dev); sv = torch.zeros(N, device=dev)
-    rows = []
+    rows = []; start = task._humanoid_root_states_list[0][:, :2].clone(); fwd0 = torch.nn.functional.normalize(task._humanoid_root_states_list[1][:, :2] - start, dim=-1)
     for t in range(T):
         obs = task.obs_buf
-        task.step(torch.cat([low(obs[:N], task.drill_ids), low(obs[N:2 * N], task.opp_drill_ids)], 0))
+        z0 = low(obs[:N], task.drill_ids); z1 = low_opp(obs[N:2 * N], task.opp_drill_ids)
+        if SIG[0] > 0: z0 = z0 + SIG[0] * torch.randn_like(z0)
+        if SIG[1] > 0: z1 = z1 + SIG[1] * torch.randn_like(z1)
+        task.step(torch.cat([z0, z1], 0))
         r0 = task._humanoid_root_states_list[0][:, :2]; r1 = task._humanoid_root_states_list[1][:, :2]
         gate = ((r0 - r1).norm(dim=-1) < task.dodge_evade_gate).float()
         opp_tip = task.get_sword_tip_pos()[1]; opp_hand = task._rigid_body_pos_list[1][:, task._hand_ids]
         d = opp_tip - opp_hand; d = d / d.norm(dim=-1, keepdim=True).clamp_min(1e-6)
         ap = task._rigid_body_pos_list[0][:, task._target_ids] - opp_hand
         perp = (ap - (ap * d).sum(-1, keepdim=True) * d).norm(dim=-1).min(-1).values
+        disp = r0 - start; fw = (disp * fwd0).sum(-1); lat = (disp - fw[:, None] * fwd0).norm(dim=-1)
         ev += task.dodge_evade_w * torch.where(gate > 0, torch.clamp(perp / task.dodge_offline_scale, 0, 1), torch.full_like(perp, task.dodge_far_value))
         got = task.sword_hit_list[1][:, 0].float()
         hit += -task.dodge_imhit_w * got; tot += task.rew_buf[:N]; L += 1
@@ -79,9 +85,11 @@ def episode_budget(task, low, T=300):
         if len(dn):
             oob = task.out_bound[dn]
             for k, e in enumerate(dn.tolist()):
-                rows.append((float(tot[e]), float(ev[e]), float(hit[e]), float(L[e]), bool(got[e]), bool(oob[k]), float(sv[e])))
+                rows.append((float(tot[e]), float(ev[e]), float(hit[e]), float(L[e]), bool(got[e]), bool(oob[k]), float(sv[e]), float(fw[e]), float(lat[e]), float(perp[e])))
             tot[dn] = 0; ev[dn] = 0; hit[dn] = 0; L[dn] = 0; sv[dn] = 0
             task.reset(dn)
+            start[dn] = task._humanoid_root_states_list[0][dn, :2]
+            fwd0[dn] = torch.nn.functional.normalize(task._humanoid_root_states_list[1][dn, :2] - start[dn], dim=-1)
     a = np.array(rows, dtype=float)
     H = a[:, 4] > 0; S = (~H) & (a[:, 5] == 0)
     print("\n================ dodge reward budget per EPISODE (v15 weights) ================")
@@ -93,6 +101,8 @@ def episode_budget(task, low, T=300):
     if H.any() and S.any():
         gapr = a[S, 0].mean() - a[H, 0].mean(); outc = -a[H, 2].mean() + a[S, 6].mean()
         print("  return(survive) - return(hit) = %.2f ; explicit win/lose part = %.2f (%.0f%%)" % (gapr, outc, 100 * outc / gapr))
+    print("  movement at episode end (from spawn): forward toward opp mean=%+.2f m | sideways |lat| mean=%.2f m, >0.3m=%.0f%% | off-line dist at hit mean=%.2f m" %
+          (a[:, 7].mean(), a[:, 8].mean(), 100 * (a[:, 8] > 0.3).mean(), a[H, 9].mean() if H.any() else float('nan')))
 
 @hydra.main(version_base=None, config_path="../phc/data/cfg", config_name="config")
 def main(cfg_hydra: DictConfig) -> None:
@@ -108,7 +118,12 @@ def main(cfg_hydra: DictConfig) -> None:
                      "physics_engine": gymapi.SIM_PHYSX, "headless": cfg.headless, "device": cfg.device})
     task, env = parse_task(args, cfg, cfg_train=cfg.learning, sim_params=sim_params)
     low = FrozenLowLevelPolicy(cfg.env["low_level_checkpoint"], NUM_DRILLS, device=task.device)
-    episode_budget(task, low) if cfg.env.get('budget', False) else run(task, low)
+    SIG[0] = cfg.env.get('sig_learner', 0.0); SIG[1] = cfg.env.get('sig_opp', 0.0)
+    print('[noise] learner sigma=%.3f opponent sigma=%.3f' % (SIG[0], SIG[1]))
+    oc = cfg.env.get('opp_checkpoint', None)
+    low_opp = FrozenLowLevelPolicy(oc, NUM_DRILLS, device=task.device) if oc else None
+    print('[opponent] %s' % (oc or 'same network as learner'))
+    episode_budget(task, low, low_opp=low_opp) if cfg.env.get('budget', False) else run(task, low)
 
 if __name__ == '__main__':
     main()

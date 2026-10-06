@@ -50,6 +50,12 @@ class AMPSelfPlayAgent(common_agent.CommonAgent):
         
         self.switch_frequency = config.get('switch_frequency', 1)
         self.update_agent = config['update_agent']
+        # Snapshot self-play: copy the learner (agent 0) into the frozen opponent (agent 1) at the start
+        # of training and then every N epochs. Without this (and with switch_frequency effectively
+        # infinite), agent 1 was never updated: the drills' dodge opponent stayed bit-identical from
+        # drills-v3 to v16 and its lunge never landed. 0 = old behavior (never sync).
+        self.opponent_sync_frequency = config.get('opponent_sync_frequency', 0)
+        self._opp_synced_once = False
         
         
         if self.normalize_input:
@@ -717,8 +723,29 @@ class AMPSelfPlayAgent(common_agent.CommonAgent):
         return
 
 
+    def _maybe_sync_opponent(self, epoch_num):
+        if self.opponent_sync_frequency <= 0 or self.update_agent != 0:
+            return
+        if self._opp_synced_once and epoch_num % self.opponent_sync_frequency != 0:
+            return
+        self.agent_1_model.load_state_dict(self.agent_0_model.state_dict())
+        if self.normalize_input:
+            self.agent_1_running_mean_std.load_state_dict(self.agent_0_running_mean_std.state_dict())
+        if self.normalize_value:
+            self.agent_1_value_mean_std.load_state_dict(self.agent_0_value_mean_std.state_dict())
+        if self._normalize_amp_input:
+            self.agent_1_amp_input_mean_std.load_state_dict(self.agent_0_amp_input_mean_std.state_dict())
+        # a snapshot: keep the opponent's normalization stats fixed until the next sync
+        if self.normalize_input:
+            self.agent_1_running_mean_std.freeze()
+        if self.normalize_value:
+            self.agent_1_value_mean_std.freeze()
+        self._opp_synced_once = True
+        print(f"[self-play] opponent (agent 1) <- learner (agent 0) at epoch {epoch_num}")
+
     def pre_epoch(self, epoch_num):
         # print("freeze running mean/std")
+        self._maybe_sync_opponent(epoch_num)
 
         if self.vec_env.env.task.humanoid_type in ["smpl", "smplh", "smplx"]:
             humanoid_env = self.vec_env.env.task

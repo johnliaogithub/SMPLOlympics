@@ -10,6 +10,32 @@ config flags (logged to W&B) rather than code replacements. See v5.
 
 ---
 
+## v17 — fix: the dodge's training opponent is now the learner (snapshot self-play); v16 warm-start
+
+**Bug (T1 in `ENV_AUDIT.md`):** in drills training the dodge's lunging opponent is rl_games'
+separate `agent_1_model`.
+- With `switch_frequency=1e9` it was never synced from the learner. `save()` wrote it back unchanged
+  and every warm-start reloaded it, so `Humanoid_op.pth` was bit-identical from drills-v3 to v16.
+- Its lunge never lands: v16 was hit **0 of 1,024** times against it, vs **99%** against the
+  learner's real lunge, which is what the evals and recordings use.
+- So the dodge has had no real threat since v3. This explains:
+  - v14/v15 drifting forward to farm the distance gate;
+  - v16 freezing, the optimal policy when nothing ever lands.
+- Lunges and footwork are unaffected (their opponent is overridden to Z=0).
+
+**Fix:** new `opponent_sync_frequency` in `phc/learning/amp_self_play_agent.py`.
+- The opponent gets a copy of the learner's actor/critic and obs/value normalization at the start of
+  training, then every N epochs, and its stats are frozen between syncs. 0 = old behavior.
+- Set to **500** in `train_fencing_drills.sh` (note the `+` prefix, since it's a new hydra key).
+- **Verified with a real 4-epoch run** (sync every epoch): each saved `_op` is bit-identical to the
+  previous epoch's learner (0.00 difference) and 0.366 away from the old frozen opponent.
+
+- **Reward:** unchanged from v16 (hit −20 / survive +20 / evade_w 0.2 / far 0.5 / foot_back 0.25).
+  Win/lose can finally bite, because hits now land in training.
+- **Warm-start:** v16 @ 102000. Launch: `bash scripts/fencing/train_fencing_drills.sh C 6000`.
+- **Expectation:** the dodge starts out hit very often against a real lunge (v16: 99%). Judge it by
+  the hit-rate trend, using the realistic-opponent eval.
+
 ## v16 — dodge: constant out-of-range value, explicit win/lose dominant; v15 warm-start
 
 **Motivation:** v15's dodge still moved forward. The code and sim were verified correct
