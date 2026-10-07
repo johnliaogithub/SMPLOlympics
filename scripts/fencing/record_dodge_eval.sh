@@ -15,6 +15,14 @@ if [[ -z "$CUDA_VISIBLE_DEVICES" ]]; then
 fi
 
 LOW_LEVEL="${1:-output/HumanoidIm/fencing_drills_v17/Humanoid.pth}"
+if [[ ! -f "${LOW_LEVEL}" ]]; then
+    echo "[error] low-level checkpoint not found: ${LOW_LEVEL}"
+    echo "        (has that version finished training? its first checkpoint saves after 2000 epochs)"
+    echo "        available final checkpoints:"
+    ls -1t output/HumanoidIm/fencing_drills_v*/Humanoid.pth 2>/dev/null | head -5 | sed 's/^/          /'
+    echo "        usage: bash $0 <path/to/Humanoid.pth>"
+    exit 1
+fi
 [[ $# -gt 0 ]] && shift
 echo "[dodge-eval] low-level: ${LOW_LEVEL}"
 
