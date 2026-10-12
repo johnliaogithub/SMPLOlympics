@@ -10,6 +10,21 @@ config flags (logged to W&B) rather than code replacements. See v5.
 
 ---
 
+## v18 — dodge: remove the rear-foot-back penalty; v17 warm-start
+
+**v17 result:** the first dodge that evades the real lunge. In the 10-bout eval it was hit 0/10
+(v16: ~99%). It sidestepped left by 0.31–0.65 m in every bout while moving 0.3–0.8 m forward.
+
+**Hypothesis:** it always goes left because the rear (left) foot is pinned by the foot-back penalty,
+so the only way to get off the line is to move the right foot.
+
+- **Change:** `dodge_footback_w` 0.25 → **0**. Everything else is identical to v17, including the
+  reward and `opponent_sync_frequency=500`.
+- **Risk to watch:** without the pin, nothing stops the dodge from becoming a retreat (out-of-bounds is
+  ~6 m behind). In `record_dodge_eval.sh`, a consistently negative `dy` means it has started retreating.
+  Also check whether `dx` now goes both left and right.
+- **Warm-start:** v17 @ 108000. Launch: `bash scripts/fencing/train_fencing_drills.sh C 6000`.
+
 ## v17 — fix: the dodge's training opponent is now the learner (snapshot self-play); v16 warm-start
 
 **Bug (T1 in `ENV_AUDIT.md`):** in drills training the dodge's lunging opponent is rl_games'
