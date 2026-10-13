@@ -13,7 +13,7 @@ cd /pub0/johnliao/SMPLOlympics
 # humanoid.py); a tmp-cleaner wipes it between runs -> FileNotFoundError on env creation. Recreate it.
 mkdir -p /tmp/j73liao
 
-LOW_LEVEL="${1:-output/HumanoidIm/fencing_drills_v18/Humanoid.pth}"
+LOW_LEVEL="${1:-output/HumanoidIm/fencing_drills_v19/Humanoid.pth}"
 if [[ ! -f "${LOW_LEVEL}" ]]; then
     echo "[error] low-level checkpoint not found: ${LOW_LEVEL}"
     echo "        (has that version finished training? its first checkpoint saves after 2000 epochs)"

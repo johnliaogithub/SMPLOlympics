@@ -128,6 +128,11 @@ class HumanoidFencingDrills(HumanoidFencing):
         self.dodge_duel = cfg["env"].get("dodge_duel", False)
         self.dodge_imhit_w = cfg["env"].get("dodge_imhit_w", 5.0)   # got-hit penalty weight
         self.dodge_spawn_jitter = cfg["env"].get("dodge_spawn_jitter", 0.0)  # +/- m on spawn gap
+        # Two-sided self-play: fraction of LUNGE episodes in which the opponent actively DODGES (the
+        # live, synced snapshot) instead of standing still (Z=0). Before this, the lunge only ever
+        # practiced on a stationary target, so it never learned to track and any sidestep beat it.
+        # The rest stay stationary so basic accuracy is kept. 0 = old behavior (always stationary).
+        self.lunge_vs_dodge_prob = cfg["env"].get("lunge_vs_dodge_prob", 0.0)
         # per-env duel offense target (False=upper, True=groin): randomized so the counter isn't
         # always the high thrust and both engage-high / engage-low get trained.
         self._duel_target = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
@@ -192,8 +197,12 @@ class HumanoidFencingDrills(HumanoidFencing):
                                    torch.tensor(D_LUNGE_UPPER, device=self.device),
                                    torch.tensor(D_LUNGE_GROIN, device=self.device))
         opp[dodge_mask] = lunge_choice[dodge_mask]
+        # two-sided self-play: some lunge episodes face a live dodging opponent
+        lunge_mask = (new_drills == D_LUNGE_UPPER) | (new_drills == D_LUNGE_GROIN)
+        vs_dodge = lunge_mask & (torch.rand(n, device=self.device) < self.lunge_vs_dodge_prob)
+        opp[vs_dodge] = D_DODGE
         self.opp_drill_ids[env_ids] = opp
-        self.opp_frozen[env_ids] = ~dodge_mask
+        self.opp_frozen[env_ids] = ~(dodge_mask | vs_dodge)
 
         # Strike drills (lunge_upper/groin/dodge) spawn IN RANGE (1.5 m apart) so
         # the proximity/hit reward is reachable; otherwise the agent farms the

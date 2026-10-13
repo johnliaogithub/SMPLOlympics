@@ -10,6 +10,38 @@ config flags (logged to W&B) rather than code replacements. See v5.
 
 ---
 
+## v19 — two-sided self-play: the lunge also trains against a live dodger; v18 warm-start
+
+**v18 result:** removing the rear-foot penalty made the sidestep bigger (mean 0.44 → 0.59 m) and
+didn't turn it into a retreat (dy stayed +0.3–0.6 m). Still 0/10 hits, but still **left every time**,
+so the pinned foot wasn't the cause.
+
+**Diagnosis:** the lunge only ever trained against a **stationary** target: in lunge drills the
+opponent is overridden to Z=0. It learned to strike where the target *is*, not to track it, so any
+sidestep beats it and "always left" is never punished.
+- Measured with v18 vs itself (`phc/verify_selfplay.py`): the lunge lands **100%** against a
+  stationary target but only **35%** against a live dodger.
+- (This doesn't match the dodge eval's 0/10; the setups differ in who is agent 0/1 and in counting
+  follow-up attacks. To reconcile in the 256-episode eval.)
+
+- **Change:** new `lunge_vs_dodge_prob` (drill sampler). In that fraction of lunge episodes the
+  opponent actively dodges (the live snapshot, synced from the learner every 500 epochs) instead of
+  standing still. Set to **0.75**; the remaining 25% stay stationary to protect basic accuracy.
+  0 = old behavior.
+  - Verified: 77.7% of lunge episodes got a live, unfrozen dodger; all stationary ones stayed frozen.
+- **Why 25% stationary and not a KL anchor to the old policy:** with the fixed exploration sigma, the
+  KL reduces to a squared distance between mean actions. It would anchor the moving-target states,
+  which are exactly where we want change. Tracking a moving target should cover the stationary case
+  anyway.
+- **Other settings:** reward as v18 (footback 0), with `opponent_sync_frequency=500`.
+- **Warm-start:** v18 @ 114000. Launch: `bash scripts/fencing/train_fencing_drills.sh C 6000`.
+- **Watch:**
+  - the lunge's landing rate vs a dodger (should rise);
+  - the dodge's hit rate (may rise at first, which is fine);
+  - whether "always left" breaks;
+  - stationary-target accuracy in the drills recording;
+  - cycling, so compare against v18 as a fixed reference, not only the latest version.
+
 ## v18 — dodge: remove the rear-foot-back penalty; v17 warm-start
 
 **v17 result:** the first dodge that evades the real lunge. In the 10-bout eval it was hit 0/10
