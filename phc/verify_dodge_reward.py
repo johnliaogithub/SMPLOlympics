@@ -80,7 +80,7 @@ def episode_budget(task, low, T=300, low_opp=None):
         ev += task.dodge_evade_w * torch.where(gate > 0, torch.clamp(perp / task.dodge_offline_scale, 0, 1), torch.full_like(perp, task.dodge_far_value))
         got = task.sword_hit_list[1][:, 0].float()
         hit += -task.dodge_imhit_w * got; tot += task.rew_buf[:N]; L += 1
-        sv += task.dodge_survive_bonus * ((task.progress_buf >= task.strike_episode_length) & (got < 0.5)).float()
+        sv += task.dodge_survive_bonus * ((task.progress_buf >= task._strike_len()) & (got < 0.5)).float()
         dn = task.reset_buf.nonzero().flatten()
         if len(dn):
             oob = task.out_bound[dn]

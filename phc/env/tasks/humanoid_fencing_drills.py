@@ -109,6 +109,12 @@ class HumanoidFencingDrills(HumanoidFencing):
         # lunge envs time out fast so the agent must commit to a lunge instead of a
         # slow walk-in. This is per-env in the SHARED net — no separate training run.
         self.strike_episode_length = cfg["env"].get("strike_episode_length", 0)
+        # Exchange window (v20): dodge bouts and lunge-vs-live-dodger bouts end after this many steps
+        # instead of strike_episode_length. Short enough that the dodger can only take ~one explosive
+        # step (it walked back 2.7 m in 70 steps), long enough that a full-speed lunge on a still
+        # target lands (99.9% by step 28). Stationary lunges keep strike_episode_length (recovery).
+        # 0 = off (use strike_episode_length for all strike drills).
+        self.exchange_episode_length = cfg["env"].get("exchange_episode_length", 0)
         # Spawn half-distance for strike drills (each agent at +/- this along y).
         # 0.875 => 1.75 m apart, ~lunge range. Tune together with strike_episode_length:
         # closer spawn + shorter episode forces a pure lunge.
@@ -456,7 +462,8 @@ class HumanoidFencingDrills(HumanoidFencing):
             # out of range: constant value instead of 0 (see dodge_far_value)
             evade = torch.where(gap < self.dodge_evade_gate, offline_r, torch.full_like(offline_r, self.dodge_far_value))
             # explicit win: survived to the strike-episode timeout without being hit
-            survived = ((self.strike_episode_length > 0) & (self.progress_buf >= self.strike_episode_length) & (im_hit < 0.5)).float()
+            slen = self._strike_len()
+            survived = ((slen > 0) & (self.progress_buf >= slen) & (im_hit < 0.5)).float()
             lf_xy = self._rigid_body_pos_list[i][:, self._left_foot_id[0], 0:2]
             back_drift = torch.clamp_min(-torch.sum((lf_xy - self._left_foot_anchor_list[i]) * tar_dir, dim=-1), 0.0)
             foot_back_pen = torch.clamp(back_drift / 0.3, 0.0, 1.0)                 # rear foot stepped back
@@ -548,6 +555,16 @@ class HumanoidFencingDrills(HumanoidFencing):
             self._drill_rew_count.zero_()
             self._drill_log_n = 0
 
+    def _strike_len(self):
+        """Per-env timeout for strike drills: the exchange window for dodge bouts and lunge-vs-dodger
+        bouts (when enabled), otherwise strike_episode_length."""
+        L = torch.full((self.num_envs,), float(self.strike_episode_length), device=self.device)
+        if self.exchange_episode_length > 0:
+            lunge = (self.drill_ids == D_LUNGE_UPPER) | (self.drill_ids == D_LUNGE_GROIN)
+            exch = (self.drill_ids == D_DODGE) | (lunge & (self.opp_drill_ids == D_DODGE))
+            L[exch] = float(self.exchange_episode_length)
+        return L
+
     def _drill_hit_done(self):
         # Strike drills end on the strike_episode_length timeout. The LUNGE no longer
         # ends on its hit — it continues into the recovery phase (see _lunge_landed), so
@@ -555,8 +572,9 @@ class HumanoidFencingDrills(HumanoidFencing):
         # opponent lands a hit on the learner (dodge failed).
         strike_mask = (self.drill_ids == D_LUNGE_UPPER) | (self.drill_ids == D_LUNGE_GROIN) | (self.drill_ids == D_DODGE)
         done = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
-        if self.strike_episode_length > 0:
-            done |= strike_mask & (self.progress_buf >= self.strike_episode_length)
+        if self.strike_episode_length > 0 or self.exchange_episode_length > 0:
+            slen = self._strike_len()
+            done |= strike_mask & (slen > 0) & (self.progress_buf >= slen)
         if not hasattr(self, 'sword_hit_list'):
             return done
         got_hit = self.sword_hit_list[1].squeeze(-1).bool()       # opponent hit agent 0

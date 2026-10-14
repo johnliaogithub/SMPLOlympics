@@ -14,7 +14,7 @@ if [[ -z "$CUDA_VISIBLE_DEVICES" ]]; then
         --format=csv,noheader,nounits | sort -t, -k2 -nr | head -1 | cut -d, -f1 | tr -d ' ')
 fi
 
-LOW_LEVEL="${1:-output/HumanoidIm/fencing_drills_v19/Humanoid.pth}"
+LOW_LEVEL="${1:-output/HumanoidIm/fencing_drills_v20/Humanoid.pth}"
 if [[ ! -f "${LOW_LEVEL}" ]]; then
     echo "[error] low-level checkpoint not found: ${LOW_LEVEL}"
     echo "        (has that version finished training? its first checkpoint saves after 2000 epochs)"
@@ -43,6 +43,7 @@ python phc/visualize_dodge_eval.py \
     +record_video=True \
     env.episode_length=175 \
     +env.strike_episode_length=70 \
+    +env.exchange_episode_length=28 \
     +env.strike_spawn_half_dist=1.0 \
     +env.dodge_duel=False \
     +env.dodge_pure=True \

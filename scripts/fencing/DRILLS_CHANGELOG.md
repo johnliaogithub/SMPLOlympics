@@ -10,6 +10,44 @@ config flags (logged to W&B) rather than code replacements. See v5.
 
 ---
 
+## v20 — boundary-observation fix + 28-step exchange window; v19 warm-start
+
+**v19 result (re-measured on a symmetric env):** two-sided self-play made the lunge track, but the
+dodge became a walk-back.
+- The lunge lands ~44–47% against a live dodger.
+- The dodger survives by retreating ~2.7 m over the 70-step bout.
+- In real fencing a defensive step back is one step, so the drill was rewarding the wrong thing.
+
+**Found while reconciling the evals** (full log in `DODGE_INVESTIGATION.md`): the strip-boundary
+observation was **world-ordered**.
+- The fencer at +y saw the two strip corners swapped ("the wall behind me is in front").
+- The learner always trains at −y, so every self-play opponent so far (v17–v19 dodge attacker, v19
+  dodging target, and agent 1 in all evals) ran with flipped boundaries.
+- Effect: same network, mirrored starts: lunge 100% vs 77%, retreat 1.22 vs 0.72 m. This bug is from
+  upstream (`3d99e8e`).
+
+**Changes:**
+- **`bbox_obs_facing_sorted=True`** (env default): corners are ordered by each fencer's own facing.
+  - Agent 0's observation is bit-identical, so checkpoints stay valid.
+  - Verified: mirrored observations identical, retreat bias 0.506 → 0.0005 m, all four side-swap
+    match-ups symmetric.
+- **`exchange_episode_length=28`** (0.93 s): dodge bouts and lunge-vs-live-dodger bouts end at 28
+  steps; stationary lunges keep 70 (recovery phase).
+  - Chosen from `phc/verify_timing.py` (v19):
+    - A full-speed lunge on a still target lands 99.9% by step 28 (median 21).
+    - The dodger can only get ~0.6–0.8 m away by then: one step, not a walk.
+  - The dodge survival bonus fires at the new timeout.
+  - Verified: dodge bouts end ≤28, lunge-vs-dodger at 28, lunge-vs-still at 70.
+  - With v19's current speed, the lunge lands only ~10% against the dodger within 28 steps, so it must
+    get faster.
+- **Unchanged:** reward as v19 (rear-foot penalty off, ±20 win/lose), two-sided self-play 0.75,
+  opponent sync every 500 epochs. **No fall penalty** (falls measured at 0.1–0.4% of bouts).
+- **Warm-start:** v19 @ 120000. Launch: `bash scripts/fencing/train_fencing_drills.sh C 6000`.
+- **Watch:**
+  - the lunge's landing rate against a dodger within 28 steps (should rise from ~10%);
+  - the dodger's step-back distance (should stay ≈ one step);
+  - symmetry, via `phc/verify_roles.py`.
+
 ## v19 — two-sided self-play: the lunge also trains against a live dodger; v18 warm-start
 
 **v18 result:** removing the rear-foot penalty made the sidestep bigger (mean 0.44 → 0.59 m) and

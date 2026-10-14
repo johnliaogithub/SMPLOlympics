@@ -96,6 +96,12 @@ class HumanoidFencing(humanoid_amp_task.HumanoidAMPTask):
         ########## building for boxing area ##########
         self.bounding_box = torch.tensor([-1, 1, -7, 7,]).to(self.device) # x_min, x_max, y_min, y_max
         self.bounding_box_points = torch.tensor([[[-1, -7, 0], [1, 7, 0]]]).repeat(self.num_envs, 1, 1).to(self.device)
+        # The strip is observed as two corners. Upstream passes them in a fixed WORLD order, so the
+        # fencer at -y sees [behind, ahead] but the fencer at +y sees [ahead, behind]. The learner always
+        # trains at -y, so every agent-1 opponent misread the boundaries (retreat 0.5 m shorter, lunge
+        # 100% -> 77% from mirrored starts). When True, order the corners by each fencer's own facing
+        # (behind first). Agent 0's observation is unchanged, so existing checkpoints stay valid.
+        self.bbox_obs_facing_sorted = cfg["env"].get("bbox_obs_facing_sorted", True)
         self.env_ids_all = torch.arange(self.num_envs).to(self.device)
         self.warmup_time = int(250/self.dt)
         self.step_counter = 0
@@ -344,6 +350,16 @@ class HumanoidFencing(humanoid_amp_task.HumanoidAMPTask):
         red_win = self.sword_hit_history[:, 1] > self.win_frame_hit
         return out_bound, red_win, green_win
     
+    def _facing_sorted_bbox(self, root_states, env_ids):
+        pts = self.bounding_box_points[env_ids]                                   # (n,2,3)
+        if not self.bbox_obs_facing_sorted:
+            return pts
+        heading = torch_utils.calc_heading_quat(root_states[:, 3:7])              # (n,4)
+        fwd = quat_rotate(heading, torch.tensor([1.0, 0.0, 0.0], device=self.device).expand(pts.shape[0], 3))
+        proj = ((pts - root_states[:, None, 0:3]) * fwd[:, None, :]).sum(-1)      # (n,2) forward distance
+        order = torch.argsort(proj, dim=1)                                         # behind corner first
+        return torch.gather(pts, 1, order[..., None].expand(-1, -1, 3))
+
     def _compute_task_obs(self, env_ids=None):
         
         obs_list = []
@@ -378,7 +394,7 @@ class HumanoidFencing(humanoid_amp_task.HumanoidAMPTask):
 
         
             obs = compute_fencing_observation(root_states, body_pos, opponent_root_states[:, 0], opponent_body_pos[:, 0], opponent_body_rot[:, 0], 
-                                             opponent_dof_pos[:, 0], opponent_dof_vel[:, 0], contact_force_norm, opponent_contact_force_norm[:, 0], self.bounding_box_points[env_ids], 
+                                             opponent_dof_pos[:, 0], opponent_dof_vel[:, 0], contact_force_norm, opponent_contact_force_norm[:, 0], self._facing_sorted_bbox(root_states, env_ids), 
                                              self_sword_pos, self._target_ids)                        
             obs_list.append(obs)
         
