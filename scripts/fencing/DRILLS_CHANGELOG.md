@@ -10,6 +10,47 @@ config flags (logged to W&B) rather than code replacements. See v5.
 
 ---
 
+## v21 — en garde: the `stand` drill becomes a real ready stance; v20 warm-start
+
+**v20 result** (`phc/eval_dodge_components.py`, 256 episodes; `verify_timing.py`):
+- **Dodge survives 89%**, but only by stepping back ~0.9 m in 28 steps. It moves no distance sideways
+  and stays on the attack line.
+- **The lunge lands only ~12% against a dodger within 28 steps.** Against a still target it improved:
+  97% land by step 25 (v19 91%).
+- **The off-line reward is dead:** a constant 0.1/step. The 1.5 m gate never opens because the fencers
+  stay 1.9–2.3 m apart. Facing and posture are identical across outcomes, so within a bout only the
+  terminal ±20 separates success from failure.
+- **Lunger falls:** 37% of 70-step chases, but all after step ~50 and none inside the 28-step window.
+
+**Diagnosis (user):** both fencers spawn feet-together with the sword down.
+- The attacker spends its first ~5–10 steps raising and aiming the sword.
+- The dodger has no loaded stance to push off from.
+- A survey (`phc/survey_engarde.py`) found **0 of 76,800 frames**, in any drill, with all of: both feet
+  planted, feet split, sword up and aimed, and still.
+  - `stand` is planted and still but feet-together with the sword on the floor (split 1%, sword 1%).
+  - The lunge has the sword up (72–81%) but with the feet moving.
+- So there's no ready stance to start bouts from, and a self-generated start-state bank is impossible
+  with this policy.
+
+**Change:**
+- **`stand_engarde=True`:** the `stand` slot (index 2, so the drill count is unchanged and checkpoints
+  stay compatible) now rewards
+  `0.25·planted + 0.25·split + 0.25·sword + 0.15·still + 0.10·facing`:
+  - planted: both feet bearing >50 N;
+  - split: front (right) foot ahead of the rear foot, Gaussian around 0.45 m, σ 0.15;
+  - sword: (blade·direction-to-opponent's-chest)² × Gaussian on tip height around 1.1 m, σ 0.3.
+  - The posture bonus and free-arm penalty still apply as before.
+  - Smoke test on v20's current stand: planted 1.00, still 0.98, facing 1.00, **split 0.00, sword 0.00**
+    (tip at −0.03 m, on the floor). So it earns ≈0.5 of 1.0, and the rest only comes from taking the
+    stance.
+- **Drill mix:** `stand` weight 0.4 → 1.0 (≈18% of bouts) so the new stance gets practice. Dodge is
+  still the largest share.
+
+- **Unchanged from v20:** everything else.
+- **Warm-start:** v20 @ 126000. Launch: `bash scripts/fencing/train_fencing_drills.sh C 6000`.
+- **Next (v22):** once `survey_engarde.py` shows qualifying frames from `stand`, build a start-state
+  bank from them and begin exchange bouts in en garde.
+
 ## v20 — boundary-observation fix + 28-step exchange window; v19 warm-start
 
 **v19 result (re-measured on a symmetric env):** two-sided self-play made the lunge track, but the

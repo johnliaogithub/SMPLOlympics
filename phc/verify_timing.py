@@ -42,7 +42,7 @@ def bouts(task, low, d1, still1, T=70, rounds=4):
 
 def run(task, low):
     task.step_counter = task.warmup_time + 10
-    print("\n================ exchange-window timing (v19 policy, symmetric env, 1024 bouts each) ================")
+    print("\n================ exchange-window timing (symmetric env, 1024 bouts each) ================")
     fh, gap, _, fall, _ = bouts(task, low, D_STAND, True)
     ok = fh > 0
     print("[lunge vs STILL]  spawn gap %.2f-%.2f m (mean %.2f) | landed %.1f%% | first-hit step p10=%d p50=%d p90=%d (x33ms) | attacker fell: %.1f%%"
@@ -57,6 +57,9 @@ def run(task, low):
           % (100 * ok.mean(), np.percentile(fh[ok], 10), np.median(fh[ok]), np.percentile(fh[ok], 90), 100 * fall.mean()))
     fb = fall & ((fh < 0) | (fall_t < fh))
     print("      attacker fell BEFORE landing (or without landing): %.1f%% of bouts" % (100 * fb.mean()))
+    ft = fall_t[fall]
+    if ft.size: print("      fall step: p10=%d p50=%d p90=%d | falls within the first 28 steps: %.1f%% of all bouts" %
+                      (np.percentile(ft, 10), np.median(ft), np.percentile(ft, 90), 100 * (fall & (fall_t <= 28)).mean()))
     print("      dodger distance moved away from the attacker (mean m) at step: " +
           "  ".join("t%d=%.2f" % (t, away[:, t - 1].mean()) for t in (5, 10, 15, 20, 25, 30, 40, 70)))
     print("[if the window were W steps] landing rate vs STILL / vs DODGER:")

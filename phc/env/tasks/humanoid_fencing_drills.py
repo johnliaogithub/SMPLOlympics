@@ -73,6 +73,15 @@ class HumanoidFencingDrills(HumanoidFencing):
         # Pelvis->Chest vector is the "spine" direction, used for the upright posture term.
         self._pelvis_id = self._build_key_body_ids_tensor(["Pelvis"])
         self._chest_id = self._build_key_body_ids_tensor(["Chest"])
+        # EN GARDE (v21): repurpose the 'stand' drill slot as a real ready stance (drill count unchanged,
+        # so checkpoints stay compatible). The old stand reward (stillness/facing/head stability) let the
+        # fencer stand feet-together leaning on its sword; a 2026-10-20 survey found 0 of 76,800 frames
+        # in any drill with both feet planted + feet split + sword up and aimed + still.
+        self.stand_engarde = cfg["env"].get("stand_engarde", False)
+        self.engarde_split = cfg["env"].get("engarde_split", 0.45)      # m: front (right) foot ahead of rear foot
+        self.engarde_tip_z = cfg["env"].get("engarde_tip_z", 1.1)       # m: sword tip height
+        self._lfoot_ids = self._build_key_body_ids_tensor(["L_Ankle", "L_Toe"])
+        self._rfoot_ids = self._build_key_body_ids_tensor(["R_Ankle", "R_Toe"])
         # Non-sword arm chain (sword is on R_Hand). Penalize ANY of shoulder/elbow/hand coming
         # forward, so the agent can't game a hand-only penalty by tucking the hand into the armpit
         # while the elbow still juts forward. In fencing the whole free arm stays behind.
@@ -444,6 +453,22 @@ class HumanoidFencingDrills(HumanoidFencing):
         r_advance = 0.70 * vel_toward_r + 0.30 * facing_r
         r_retreat = 0.70 * vel_away_r + 0.30 * facing_r
         r_stand = 0.60 * still_r + 0.20 * facing_r + 0.20 * head_stab_r  # stand WANTS stillness
+        if self.stand_engarde:
+            # en garde: both feet planted, front (right) foot ahead of the rear foot, sword raised and
+            # pointing at the opponent, still, facing. Each term is in [0, 1].
+            cf = self._contact_forces_list[i]
+            planted_r = 0.5 * ((cf[:, self._lfoot_ids].norm(dim=-1).sum(-1) > 50).float()
+                               + (cf[:, self._rfoot_ids].norm(dim=-1).sum(-1) > 50).float())
+            split_d = torch.sum((rf_xy - lf_xy) * tar_dir, dim=-1)
+            split_g = torch.exp(-((split_d - self.engarde_split) / 0.15) ** 2)
+            blade = F.normalize(tip - hand, dim=-1)
+            to_opp = F.normalize(opp_body_pos[:, self._chest_id[0]] - hand, dim=-1)
+            aim = torch.clamp(torch.sum(blade * to_opp, dim=-1), 0.0, 1.0)
+            sword_g = aim * aim * torch.exp(-((tip[:, 2] - self.engarde_tip_z) / 0.3) ** 2)
+            r_stand = 0.25 * planted_r + 0.25 * split_g + 0.25 * sword_g + 0.15 * still_r + 0.10 * facing_r
+            if i == 0:
+                self._engarde_terms = {"planted": planted_r, "split": split_g, "sword": sword_g, "still": still_r,
+                                       "facing": facing_r, "split_m": split_d, "tip_z": tip[:, 2]}
         # dodge: NO head-stability term — it would penalize the very evasive motion
         # dodging requires. Reward keeping the opponent's tip away + staying oriented.
         if self.dodge_offline:

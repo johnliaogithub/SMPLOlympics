@@ -145,3 +145,31 @@ The next suspect is the role split (who is agent 0 vs agent 1), tested below.
   - lunge-vs-still bouts end at 70;
   - the +20 survival bonus is paid at step 28.
   - v19 under these rules: the lunge lands only ~10% against the dodger within 28 steps.
+
+## 2026-10-20 — v20 evaluation
+- **Symmetry** (`verify_roles.py`, 1,024 bouts each) holds:
+  - lunge vs still 100.0% / 100.0% (attacker as agent 0 / agent 1);
+  - lunge vs dodger 14.5% / 13.0%;
+  - the dodger retreats ~3.1 m over 70 steps.
+- **Timing** (`verify_timing.py`, v20):
+  - **Lunge vs still:** landed 100%; first hit p10 16 / p50 21 / p90 24. It's faster than v19:
+    97.0% landed by step 25 (v19 90.9%).
+  - **Lunge vs dodger:** landed **11.6% by step 28** (v19: 30.2%) and 13.9% by step 70.
+  - Dodger moved away: t10 0.13, t20 0.46, **t25 0.69, t30 0.99**, t70 3.12 m.
+  - **Attacker falls** in 37% of 70-step bouts vs a dodger, but at **median step 60** (p10 51) and
+    **0% within the first 28 steps**, i.e. only once the chase outlasts anything it trains on.
+    No fall penalty is needed for the 28-step drills.
+- **256-episode reward-component eval** (`phc/eval_dodge_components.py`,
+  `scripts/fencing/eval_dodge_components.sh`):
+  - Checks: the env reward matches the recomputation exactly, and the component residual is 4e-6.
+  - Survived 89.1%; got hit 10.9% (median hit step 26).
+  - **The off-line term is dead:** it's a constant 0.100/step in every episode. The 1.5 m gate never
+    opens because the fencers stay 1.9–2.3 m apart for the whole bout, so it always pays
+    `far_value × evade_w`.
+  - Facing (≈0.19 vs 0.19), posture (≈0.15 vs 0.15) and free-arm (≈0) are indistinguishable between
+    outcomes. **Within a bout, only the terminal ±20 separates success from failure.**
+  - **How it survives:** it moves back **0.91 m** by step 28 (hit bouts: 0.28–0.35 m). Sideways
+    movement ≈ 0 (−0.035 m), and it stays on the attack line (off-line ≈ 0.1 m in both outcomes).
+    It keeps the gap at ~2.15 m; in hit bouts the attacker closes it to ~1.9 m.
+  - The attacker's sword comes up and points at the dodger within ~5–10 steps: off-line distance
+    1.93 m (t1) → 0.52 (t5) → 0.11 m (t10).

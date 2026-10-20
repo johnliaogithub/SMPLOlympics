@@ -55,7 +55,7 @@ fi
 # Lunge-only diagnostic gets its OWN experiment dir so it never touches v4.
 case "$PHASE" in
   L|l) EXP_NAME=fencing_lunge_only ;;
-  *)   EXP_NAME=fencing_drills_v20 ;;
+  *)   EXP_NAME=fencing_drills_v21 ;;
 esac
 OUTPUT_DIR=output/HumanoidIm/${EXP_NAME}
 
@@ -68,7 +68,8 @@ case "$PHASE" in
     echo "[Phase] C: DODGE-focused (dodge upweighted; lunges kept as the threat)"
     # dodge (idx 5) dominant; lunges (idx 3,4) kept high so the snapshot opponent
     # remains a real lunging threat; basics/lateral low but nonzero for retention.
-    DRILL_ARGS="+env.drill_probs=[0.4,0.4,0.4,0.6,0.6,2.0,0.4,0.4]"
+    # v21: stand (idx 2) raised 0.4 -> 1.0 so the new en-garde stance gets enough practice.
+    DRILL_ARGS="+env.drill_probs=[0.4,0.4,1.0,0.6,0.6,2.0,0.4,0.4]"
     ;;
   D|d)
     echo "[Phase] D: emphasize the new/lunge drills (warm-started net)"
@@ -143,6 +144,7 @@ python phc/run_hydra.py \
     env.episode_length=175 \
     +env.strike_episode_length=70 \
     +env.exchange_episode_length=28 \
+    +env.stand_engarde=True \
     +env.strike_spawn_half_dist=1.0 \
     '+env.lunge_weights={posture:0.30}' \
     +env.arm_back_pen=0.5 \
