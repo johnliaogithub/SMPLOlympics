@@ -10,6 +10,75 @@ config flags (logged to W&B) rather than code replacements. See v5.
 
 ---
 
+## v23 — lunge recovery handed to the stand drill; cheaper stepping in stand; v22 warm-start
+
+**v22 result** (details: `DODGE_INVESTIGATION.md`, 2026-10-21):
+- Stand: the feet split now, median 0.28 m (v21 0.00), but short of 0.45 m. It fidgets (still 0.95 → 0.60).
+- Lunge: lands 100% at step ~20 and never falls. But it never recovers: the torso sags forward
+  (spine_up at t65: 0.88 / 0.80 vs v21 0.94 / 0.92) until the 70-step cut, which looks like a fall.
+  The recovery reward `0.5·still + 0.3·posture + 0.2·facing` pays for freezing in the deep lunge.
+- Vs a dodger: lands 16% (v21 in the same env 23%).
+
+**Change:**
+- **`lunge_recover_as_stand=True` (user's design):** when a lunge lands against a still opponent,
+  the bout's drill becomes `stand` for the rest of the bout, both the observation one-hot and the reward.
+  - The bout then times out at `footwork_episode_length` (90), so ~70 steps of recovery.
+  - Lunges against a live dodger are unchanged (28-step window, old recovery reward).
+  - Smoke test with v22's policy: 100% switch at the hit, all bouts run to step 89, spine_up at t65 0.95.
+  - **W&B:** `drills/stand` now includes post-lunge recovery steps, and `drills/lunge_*` holds only
+    the steps up to the hit, so neither curve is comparable to v22's.
+- **`engarde_split_shape=tri`:** split ramps up to 0.45 m, then falls linearly to 0 at 0.9 m. A deep
+  lunge stance therefore has a gradient back toward guard (v22's Gaussian taper is ~0 there).
+- **`engarde_weights`:** stand reward reweighted so stepping costs less:
+
+  | term | v21 / v22 | v23 |
+  |---|---|---|
+  | planted (both feet > 50 N) | 0.25 | 0.20 |
+  | split (feet 0.45 m apart, right ahead) | 0.25 | 0.35 |
+  | sword (up, aimed at chest) | 0.25 | 0.25 |
+  | still (root speed) | 0.15 | 0.10 |
+  | facing | 0.10 | 0.10 |
+  | left-foot-ahead penalty | — / −0.15 | −0.15 |
+
+- **Unchanged from v22:** everything else.
+- **Warm-start:** v22 @ 138000. Launch: `bash scripts/fencing/train_fencing_drills.sh C 6000`.
+
+## v22 — stand-policy opponent, short footwork bouts, head-height fall ending, split ramp; v21 warm-start
+
+**v21 result:**
+- `drills/stand` rose 0.62 → 0.85 by ~20% of training, then plateaued.
+- The sword came up (0.91–0.98), but the feet never split: −0.01 to 0.00 m for the whole bout.
+  The split Gaussian (σ 0.15 around 0.45 m) is ~0 at feet-together, so it gave no gradient.
+- **The frozen opponent topples** (ENV_AUDIT E8): Z=0 falls in 136 of 256 jittered stand bouts (median step ~106).
+  The learner then steps its left foot toward the body on the floor (split −0.02 → −0.10 m).
+  The user also saw advances walk into and knock over the opponent.
+
+**Change:**
+- **`frozen_opp_policy=stand`:** non-live opponents act with the synced learner snapshot's stand
+  (en garde) drill instead of Z=0. Verified on v21 with the same jitter:
+  - opponent falls 136/256 → **0/256**;
+  - learner falls 28/256 → 0/256;
+  - learner sword term at t=175: 0.35 → 0.90.
+- **`footwork_episode_length=90`:** advance, retreat and stand time out at 90 steps (3 s) instead of 175.
+  `step_left` / `step_right` stay at 175.
+- **`fall_termination=True`, `fall_head_height=0.5`:** the bout ends when either fencer's head is below 0.5 m.
+  This includes after warmup and in test (ENV_AUDIT E4).
+  - It is not the upstream any-body < 0.15 m rule. On v21 that rule ended 209 of 216 bouts with both
+    heads above 0.6 m (a lunging knee or the free hand near the floor). In a dodge bout that would also
+    cost the dodger its survive bonus because of the lunger's knee.
+  - With the head rule, the lowest head in normal play over ~700 steps × 256 envs was p0.1 = 0.64 m.
+    Only real falls end bouts.
+- **`engarde_split_shape=ramp`:** split pays split/0.45 linearly up to 0.45 m, then keeps the Gaussian taper.
+- **`engarde_lfoot_fwd_w=0.15`:** penalty when the rear (left) foot is ahead of the front foot, full at 0.2 m.
+- **`disc_coef=0`:** the discriminator no longer trains. It never affected the policy (`disc_reward_w=0`),
+  and its demos were the single standing clip, so the `disc_*` graphs were meaningless.
+
+**Seen, not fixed:** in `step_right` bouts the stand-policy opponent still falls in ~30% (54 of 175).
+`step_left` is ~1%. Not yet investigated.
+
+- **Unchanged from v21:** everything else.
+- **Warm-start:** v21 @ 132000, copied into `fencing_drills_v22/`. Launch: `bash scripts/fencing/train_fencing_drills.sh C 6000`.
+
 ## v21 — en garde: the `stand` drill becomes a real ready stance; v20 warm-start
 
 **v20 result** (`phc/eval_dodge_components.py`, 256 episodes; `verify_timing.py`):

@@ -173,3 +173,40 @@ The next suspect is the role split (who is agent 0 vs agent 1), tested below.
     It keeps the gap at ~2.15 m; in hit bouts the attacker closes it to ~1.9 m.
   - The attacker's sword comes up and points at the dodger within ~5–10 steps: off-line distance
     1.93 m (t1) → 0.52 (t5) → 0.11 m (t10).
+
+---
+
+## 2026-10-21 — v22 eval: stand narrow and fidgety, lunge sags forward after landing
+Probe: 256 bouts each, one episode per env, v22 env (stand-policy opponent, head-height fall ending).
+Also traced the exact recorder setup (1 env, test mode; `+env.viz_trace=True` now covers the lunges).
+
+**Stand:**
+
+| | v21 | v22 |
+|---|---|---|
+| foot split, median at t60 | 0.00 m | 0.28 m (target 0.45) |
+| bouts with split > 0.25 m | 0% | 69% |
+| left foot ahead | 19% | 0% |
+| sword term | 0.92 | 0.87 |
+| still term | 0.95 | ~0.60 |
+| both feet planted | 1.00 | 0.73–0.93 |
+
+- `drills/stand` plateaued at ~0.90 from ~60% of the run.
+- Recorder bout: split 0.33 m by t10, then slides back to ~0.18 m while drifting 0.4 m backward.
+  It takes a half stance and then shuffles.
+
+**Lunge** (stationary opponent):
+- Still lands 100% at step ~20 with a 0.8–0.9 m split. No falls (head never < 0.5 m) in 100 steps,
+  in the probe or the recorder.
+- After landing it never recovers. The spine tilts forward over the rest of the bout, and the clip
+  ends at step 70 mid-lean, which looks like a fall:
+
+  | | v21 | v22 |
+  |---|---|---|
+  | spine_up at t65, upper | 0.94 | 0.88 |
+  | spine_up at t65, groin | 0.92 | 0.80 (~37°) |
+
+- The groin lunge keeps creeping in after the hit (recorder: gap 1.65 → 0.95 m).
+- Vs a dodger: lands 16% (v21 in the same env: 23%). `drills/lunge_*` drifted down 0.71 → 0.69 over the run.
+- **Cause (reward):** the recovery reward is `0.5·still + 0.3·posture + 0.2·facing`. "Still" pays for
+  freezing in the deep lunge, so nothing asks it to bring the feet back to guard.

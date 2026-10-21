@@ -55,7 +55,7 @@ fi
 # Lunge-only diagnostic gets its OWN experiment dir so it never touches v4.
 case "$PHASE" in
   L|l) EXP_NAME=fencing_lunge_only ;;
-  *)   EXP_NAME=fencing_drills_v21 ;;
+  *)   EXP_NAME=fencing_drills_v23 ;;
 esac
 OUTPUT_DIR=output/HumanoidIm/${EXP_NAME}
 
@@ -145,6 +145,14 @@ python phc/run_hydra.py \
     +env.strike_episode_length=70 \
     +env.exchange_episode_length=28 \
     +env.stand_engarde=True \
+    +env.engarde_split_shape=tri \
+    '+env.engarde_weights={planted:0.20,split:0.35,sword:0.25,still:0.10,facing:0.10}' \
+    +env.lunge_recover_as_stand=True \
+    +env.engarde_lfoot_fwd_w=0.15 \
+    +env.frozen_opp_policy=stand \
+    +env.footwork_episode_length=90 \
+    +env.fall_termination=True \
+    +env.fall_head_height=0.5 \
     +env.strike_spawn_half_dist=1.0 \
     '+env.lunge_weights={posture:0.30}' \
     +env.arm_back_pen=0.5 \
@@ -169,6 +177,7 @@ python phc/run_hydra.py \
     +learning.params.config.opponent_sync_frequency=500 \
     learning.params.config.task_reward_w=1.0 \
     learning.params.config.disc_reward_w=0.0 \
+    learning.params.config.disc_coef=0.0 \
     ${DRILL_ARGS} \
     ${CHECKPOINT_ARG} \
     ${MAX_EPOCHS_ARG} \

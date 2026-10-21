@@ -30,7 +30,7 @@ from phc.utils.flags import flags
 from phc.run_hydra import parse_sim_params
 from phc.train_fencing_strategy import FrozenLowLevelPolicy
 from phc.env.tasks.humanoid_fencing_drills import (
-    NUM_DRILLS, DRILL_NAMES, D_STAND, D_LUNGE_UPPER, D_DODGE,
+    NUM_DRILLS, DRILL_NAMES, D_STAND, D_LUNGE_UPPER, D_LUNGE_GROIN, D_DODGE,
 )
 
 
@@ -84,7 +84,9 @@ def render_drills(cfg, task, low_level, out_path):
         prev_img = None
         for t in range(clip_len):
             # Force the drill every step.
-            task.drill_ids[:] = d
+            # (except after a landed lunge switched the bout to stand: lunge_recover_as_stand)
+            if not (getattr(task, "lunge_recover_as_stand", False) and bool(task._lunge_landed[0])):
+                task.drill_ids[:] = d
             task.opp_drill_ids[:] = opp
             task.opp_frozen[:] = (not is_dodge)
 
@@ -92,6 +94,23 @@ def render_drills(cfg, task, low_level, out_path):
             z0 = low_level(obs[:N], task.drill_ids)
             z1 = low_level(obs[N:2 * N], task.opp_drill_ids)
             task.step(torch.cat([z0, z1], dim=0))
+
+            # Optional trace (+env.viz_trace=True): what the stand clip actually does, step by step.
+            if cfg.env.get("viz_trace", False) and d in (D_STAND, D_LUNGE_UPPER, D_LUNGE_GROIN) and (t % 5 == 0 or t == clip_len - 1):
+                head = int(task._build_key_body_ids_tensor(["Head"])[0])
+                bp0, bp1 = task._rigid_body_pos_list[0][0], task._rigid_body_pos_list[1][0]
+                r0, r1 = task._humanoid_root_states_list[0][0, :2], task._humanoid_root_states_list[1][0, :2]
+                fwd = (r1 - r0) / (r1 - r0).norm()
+                up1 = bp1[task._chest_id[0]] - bp1[task._pelvis_id[0]]; up1 = up1 / up1.norm()
+                lean1 = float(((bp1[task._chest_id[0], :2] - bp1[task._pelvis_id[0], :2]) * (-fwd)).sum())
+                split0 = float(((bp0[task._right_foot_id[0], :2] - bp0[task._left_foot_id[0], :2]) * fwd).sum())
+                up0 = bp0[task._chest_id[0]] - bp0[task._pelvis_id[0]]; up0 = up0 / up0.norm()
+                hit0 = bool(task.sword_hit_list[0][0]) if hasattr(task, "sword_hit_list") else False
+                print(f"[trace {DRILL_NAMES[d]} t={t:3d}] learner: head_z={float(bp0[head, 2]):.2f} spine_up={float(up0[2]):.2f} "
+                      f"hit={hit0} landed={bool(task._lunge_landed[0])} | "
+                      f"opp: frozen={bool(task.opp_frozen[0])} head_z={float(bp1[head, 2]):.2f} "
+                      f"spine_up={float(up1[2]):.2f} lean_toward_learner={lean1:+.2f}m | learner: split(R ahead of L)={split0:+.2f}m "
+                      f"gap={float((r1 - r0).norm()):.2f}m episode_progress={int(task.progress_buf[0])} reset_buf={bool(task.reset_buf[0])}")
 
             # Episode ended (touch / timeout / fall): stop the live footage and HOLD the last live
             # frame for the remaining frames, so every drill clip is the same total length

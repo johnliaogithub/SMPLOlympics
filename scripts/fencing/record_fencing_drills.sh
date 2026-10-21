@@ -13,7 +13,7 @@ cd /pub0/johnliao/SMPLOlympics
 # humanoid.py); a tmp-cleaner wipes it between runs -> FileNotFoundError on env creation. Recreate it.
 mkdir -p /tmp/j73liao
 
-LOW_LEVEL="${1:-output/HumanoidIm/fencing_drills_v21/Humanoid.pth}"
+LOW_LEVEL="${1:-output/HumanoidIm/fencing_drills_v23/Humanoid.pth}"
 if [[ ! -f "${LOW_LEVEL}" ]]; then
     echo "[error] low-level checkpoint not found: ${LOW_LEVEL}"
     echo "        (has that version finished training? its first checkpoint saves after 2000 epochs)"
@@ -55,6 +55,10 @@ python phc/visualize_drills.py \
     +env.hit_dist=0.15 \
     +env.tip_lead_margin=0.06 \
     +env.hit_swept=True \
+    +env.frozen_opp_policy=stand \
+    +env.footwork_episode_length=90 \
+    +env.fall_termination=True \
+    +env.lunge_recover_as_stand=True \
     "+env.low_level_checkpoint=${LOW_LEVEL}" \
     +env.clip_len=120 \
     "$@"

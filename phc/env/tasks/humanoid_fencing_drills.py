@@ -82,6 +82,35 @@ class HumanoidFencingDrills(HumanoidFencing):
         self.engarde_tip_z = cfg["env"].get("engarde_tip_z", 1.1)       # m: sword tip height
         self._lfoot_ids = self._build_key_body_ids_tensor(["L_Ankle", "L_Toe"])
         self._rfoot_ids = self._build_key_body_ids_tensor(["R_Ankle", "R_Toe"])
+        # v22: the v21 split Gaussian (sigma 0.15 m around 0.45 m) is ~0 at feet-together, so it gave no
+        # gradient out of the spawn pose (split stayed ~0.00 m all bout). "ramp" pays split/0.45 linearly
+        # up to the target and keeps the Gaussian taper beyond it. "gauss" = v21.
+        # "tri" (v23): the ramp up to the target, then a linear fall to 0 at 2x the target, so a deep
+        # 0.85 m lunge stance still has a gradient back toward guard (the Gaussian is ~0 there).
+        self.engarde_split_shape = cfg["env"].get("engarde_split_shape", "gauss")
+        # en-garde term weights; v23 makes stepping cheaper (split up, planted/still down)
+        self.engarde_w = {**{"planted": 0.25, "split": 0.25, "sword": 0.25, "still": 0.15, "facing": 0.10},
+                          **cfg["env"].get("engarde_weights", {})}
+        # v23: when a lunge lands against a still opponent, the bout's drill becomes `stand` for the rest
+        # of the bout (observation one-hot and reward), so recovery to guard is learned by the stand drill
+        # instead of the lunge's own recovery reward. Lunges against a live dodger keep the old behavior.
+        self.lunge_recover_as_stand = cfg["env"].get("lunge_recover_as_stand", False)
+        # v22: penalty for the rear (left) foot ahead of the front foot, full at 0.2 m (0 = off).
+        self.engarde_lfoot_fwd_w = cfg["env"].get("engarde_lfoot_fwd_w", 0.0)
+        # v22: what a non-live ("frozen") opponent does. "zero" = Z=0, the PULSE prior mean (v21 and
+        # earlier); it topples in ~55% of jittered 175-step bouts (ENV_AUDIT E8). "stand" = let the synced
+        # snapshot of the learner act with the stand (en garde) drill, which it is already conditioned on.
+        self.frozen_opp_policy = cfg["env"].get("frozen_opp_policy", "zero")
+        assert self.frozen_opp_policy in ("zero", "stand")
+        # v22: shorter timeout for advance / retreat / stand (0 = use episode_length). They are just
+        # walking; a 175-step advance also walks into (and can knock over) the opponent.
+        self.footwork_episode_length = cfg["env"].get("footwork_episode_length", 0)
+        # v22: end the bout when either fencer's head drops below fall_head_height, after warmup and in test
+        # too (ENV_AUDIT E4). Not the upstream any-body < 0.15 m rule: with v21 that ended 209 of 216 bouts
+        # with both heads above 0.6 m (a lunging knee or the free hand near the floor), which in a dodge bout
+        # would also cost the dodger its survive bonus for the lunger's knee.
+        self.fall_termination = cfg["env"].get("fall_termination", False)
+        self.fall_head_height = cfg["env"].get("fall_head_height", 0.5)
         # Non-sword arm chain (sword is on R_Hand). Penalize ANY of shoulder/elbow/hand coming
         # forward, so the agent can't game a hand-only penalty by tucking the hand into the armpit
         # while the elbow still juts forward. In fencing the whole free arm stays behind.
@@ -461,11 +490,20 @@ class HumanoidFencingDrills(HumanoidFencing):
                                + (cf[:, self._rfoot_ids].norm(dim=-1).sum(-1) > 50).float())
             split_d = torch.sum((rf_xy - lf_xy) * tar_dir, dim=-1)
             split_g = torch.exp(-((split_d - self.engarde_split) / 0.15) ** 2)
+            if self.engarde_split_shape == "tri":
+                split_g = torch.clamp(torch.minimum(split_d / self.engarde_split, 2.0 - split_d / self.engarde_split), 0.0, 1.0)
+            if self.engarde_split_shape == "ramp":
+                split_g = torch.where(split_d <= self.engarde_split,
+                                      torch.clamp(split_d / self.engarde_split, 0.0, 1.0), split_g)
+            lfoot_fwd = torch.clamp(-split_d / 0.2, 0.0, 1.0)   # rear foot ahead of the front foot
             blade = F.normalize(tip - hand, dim=-1)
             to_opp = F.normalize(opp_body_pos[:, self._chest_id[0]] - hand, dim=-1)
             aim = torch.clamp(torch.sum(blade * to_opp, dim=-1), 0.0, 1.0)
             sword_g = aim * aim * torch.exp(-((tip[:, 2] - self.engarde_tip_z) / 0.3) ** 2)
-            r_stand = 0.25 * planted_r + 0.25 * split_g + 0.25 * sword_g + 0.15 * still_r + 0.10 * facing_r
+            ew = self.engarde_w
+            r_stand = (ew["planted"] * planted_r + ew["split"] * split_g + ew["sword"] * sword_g
+                       + ew["still"] * still_r + ew["facing"] * facing_r
+                       - self.engarde_lfoot_fwd_w * lfoot_fwd)
             if i == 0:
                 self._engarde_terms = {"planted": planted_r, "split": split_g, "sword": sword_g, "still": still_r,
                                        "facing": facing_r, "split_m": split_d, "tip_z": tip[:, 2]}
@@ -553,7 +591,12 @@ class HumanoidFencingDrills(HumanoidFencing):
         if self.lunge_two_phase:
             lunge_mask = (self.drill_ids == D_LUNGE_UPPER) | (self.drill_ids == D_LUNGE_GROIN)
             learner_hit = self.sword_hit_list[0].squeeze(-1).bool()
+            newly = lunge_mask & learner_hit & ~self._lunge_landed
             self._lunge_landed |= lunge_mask & learner_hit
+            if self.lunge_recover_as_stand:
+                # runs before _compute_reset/_compute_observations, so the timeout and the next obs
+                # already use the stand drill (footwork_episode_length instead of the strike timeout)
+                self.drill_ids[newly & self.opp_frozen] = D_STAND
         return
 
     def _log_drill_rewards(self, reward):
@@ -600,6 +643,9 @@ class HumanoidFencingDrills(HumanoidFencing):
         if self.strike_episode_length > 0 or self.exchange_episode_length > 0:
             slen = self._strike_len()
             done |= strike_mask & (slen > 0) & (self.progress_buf >= slen)
+        if self.footwork_episode_length > 0:
+            walk = (self.drill_ids == D_ADVANCE) | (self.drill_ids == D_RETREAT) | (self.drill_ids == D_STAND)
+            done |= walk & (self.progress_buf >= self.footwork_episode_length)
         if not hasattr(self, 'sword_hit_list'):
             return done
         got_hit = self.sword_hit_list[1].squeeze(-1).bool()       # opponent hit agent 0
@@ -641,9 +687,11 @@ class HumanoidFencingDrillsZ(HumanoidFencingDrills):
     def step(self, actions):
         # Freeze the opponent (agent 1) by zeroing its Z-actions. With the PULSE
         # VAE prior, Z=0 decodes to the prior mean — neutral, balanced idle motion.
+        # With frozen_opp_policy="stand" its own (stand-conditioned) actions are kept instead.
         actions = actions.clone()
-        agent1 = actions[self.num_envs:2 * self.num_envs]
-        agent1[self.opp_frozen] = 0
+        if self.frozen_opp_policy == "zero":
+            agent1 = actions[self.num_envs:2 * self.num_envs]
+            agent1[self.opp_frozen] = 0
         super().step_z(actions)
         return
 
@@ -667,4 +715,11 @@ class HumanoidFencingDrillsZ(HumanoidFencingDrills):
                                                            self._strike_body_ids, self.max_episode_length,
                                                            self._enable_early_termination, self._termination_heights, self.num_agents)
         self.reset_buf[:], self._terminate_buf[:] = torch.logical_or(self.reset_buf, game_done), torch.logical_or(self._terminate_buf, game_done)
+        if self.fall_termination:
+            fallen = torch.zeros_like(self.reset_buf, dtype=torch.bool)
+            for i in range(self.num_agents):
+                fallen |= self._rigid_body_pos_list[i][:, self._head_id[0], 2] < self.fall_head_height
+            fallen &= self.progress_buf > 1
+            self.reset_buf[:] = torch.logical_or(self.reset_buf, fallen)
+            self._terminate_buf[:] = torch.logical_or(self._terminate_buf, fallen)
         return

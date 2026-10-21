@@ -15,12 +15,14 @@ Audit of the SMPLOlympics fencing env (`HumanoidFencing*`, drills + strategy). E
 | E1 | Win counter wiped for all envs whenever any env resets | upstream | runtime unit test + impact test (drills and strategy envs) | **Critical** for strategy |
 | E2 | Hit detector reads last step's positions and forces (1-step lag) | upstream | runtime test (exact equality) | Medium |
 | E3 | Sword + right hand weigh 0.25 g; stance uses the sword as a load-bearing cane | upstream asset | sim mass readout + force measurement + counterfactual | **High** (stand), mild (dodge) |
-| E4 | Fall termination off after warmup and in eval, contradicting the paper | upstream | runtime A/B/C test | Medium (low for current policies) |
+| E4 | Fall termination off after warmup and in eval, contradicting the paper | upstream | runtime A/B/C test | Medium; **v22 adds head-height fall termination** (`fall_termination`) |
 | E5 | Swept-hit branch scores some air hits | **ours** (2026-09-28) | runtime, against validated body geometry | Low |
 | E6 | `measure_tip_speed.py` / `measure_avoid_r.py` never reset finished envs | **ours** (tooling) | runtime test | Affects past numbers only |
 | E0 | Fast thrusts tunnel past the 30 Hz tip check (no CCD) | upstream | runtime (fixed via `hit_swept`) | Fixed |
 | T1 | Drills dodge trains against a frozen v2/v3-era opponent that never lands (added 2026-10-06) | ours (training setup) | weight comparison + runtime | **Fixed in v17** (`opponent_sync_frequency`) |
 | E7 | Strip-boundary observation is world-ordered: the +y fencer sees the corners swapped (added 2026-10-13) | upstream | mirrored-state runtime tests | **Fixed in v20** (`bbox_obs_facing_sorted`) |
+| E8 | Frozen Z=0 opponent topples in ~55% of jittered bouts (added 2026-10-20) | ours (training setup) | runtime, 256 envs | **Worked around in v22** (`frozen_opp_policy=stand`) |
+| E9 | Head termination height lands on the sword hand (`"head"` vs `"Head"`) (added 2026-10-20) | upstream | printed heights | Open (pre-warmup only) |
 
 The following were checked and ruled out:
 - **Virtual tip placement:** it sits within 2 cm of the blade mesh end.
@@ -155,3 +157,46 @@ The following were checked and ruled out:
   - Agent 0's observation is bit-identical; the +y fencer now gets the expected layout.
   - Verified: retreat bias 0.506 → 0.0005 m, and side-swap match-ups symmetric.
   - Full log in `DODGE_INVESTIGATION.md`.
+
+---
+
+## E8 — Frozen (Z=0) fencer topples under spawn jitter (added 2026-10-20; worked around in v22)
+- **What:** in every non-dodge drill the opponent is held at Z=0 (the PULSE prior mean). The user saw it
+  fall forward mid-stand in two recordings, and the learner then stepped its left foot toward it.
+- **Verified** (`stand_trace.py`, v21, stand drill, 128–256 envs, 175 steps; "fell" = head < 0.6 m):
+
+  | condition | opponent fell |
+  |---|---|
+  | no jitter | 2/128 |
+  | lateral 0.5 | 68–70/128 (median step ~110) |
+  | heading 0.3 only | 19/128 |
+  | lateral 0.5 + heading 0.3, `flags.test` | 78/128 |
+  | lateral 0.5, learner **also** frozen at Z=0 | 68/128 opponent, 74/128 learner |
+
+  - It is not the learner's doing: with both agents frozen, both fall at the same rate.
+  - It is not a large-offset effect: spawn x bins from −0.5 to +0.5 all fall at 45–65%.
+  - The opponent's self-observation is translation-invariant (max spread 5e-6 across envs).
+  - So any jittered spawn makes Z=0 unstable. The root cause (spawn-state velocity or
+    contact at reset, heading of the reset pose, or physics) has not been found.
+- **Impact:** training uses lateral 0.5 + heading 0.3, and fall termination is off (E4).
+  - About 55–60% of 175-step stand/footwork bouts end with a fallen opponent.
+  - The learner's stand reward (facing, gap) and its observations then come from a collapsed opponent.
+  - This is a likely source of the left-foot-forward "reaction".
+  - Stationary lunges (70 steps, median fall ~step 100) are mostly unaffected.
+- **Candidate fixes (none applied):**
+  - drive the frozen opponent with the learner's en-garde stand policy instead of Z=0;
+  - end the bout when the opponent falls;
+  - drop lateral and heading jitter for non-strike drills;
+  - find out why a jittered reset destabilizes Z=0.
+- **v22 workaround:** `frozen_opp_policy=stand` (opponent falls 136/256 → 0/256 on v21) plus head-height
+  fall termination. The root cause of the Z=0 instability is still unknown.
+
+---
+
+## E9 — Head termination height is applied to the sword hand (added 2026-10-20; upstream; open)
+- **What:** `_build_termination_heights` looks up a body named `"head"`. The SMPL body is `"Head"`, so the
+  lookup returns −1, and the 0.3 m head limit is written to the last body, `R_Hand` (the sword hand).
+  The head keeps the default 0.15 m.
+- **Verified:** printed the termination heights (only `R_Hand` = 0.30 differs from the default).
+- **Impact:** only the upstream fall rule uses this, i.e. the first ~234 epochs of a fresh run.
+  v22's head-height fall termination does not use it.
