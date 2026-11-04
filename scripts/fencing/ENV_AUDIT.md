@@ -35,7 +35,7 @@ The following were checked and ruled out:
 - **What:** `_reset_ref_state_init` runs `self.sword_hit_history[:] = 0`. This zeroes every env's win counter, not just the envs being reset. The win condition is `green_win/red_win = hit_frames > win_frame_hit`.
 - **Verified (T1):** set every env's counter to 1.5, then reset only env 0. **All 255 other envs dropped to 0**, in both the drills env and the strategy env.
 - **Impact (strategy env, 256 envs, win = hit-frames > 2, random drills, 5,966 finished bouts):** a correct per-env counter records **1,850 wins**, but the env registered **61**, so **1,789 wins (97%) were swallowed**. Every strategy result that uses wins as reward or termination is confounded. The drills env has no win condition, so its reward is unaffected.
-- **Proposed fix (not applied):** `self.sword_hit_history[env_ids] = 0`.
+- **Fixed 2026-10-27:** `win_counter_per_env` (default True) zeroes only the reset envs. `False` restores the old behavior. This also changes the strategy env.
 
 ## E2 — Hit detector lags one step
 - **What:** `HumanoidFencing.post_physics_step` calls `check_game_state()` (the hit check) *before* `super().post_physics_step()`, which is where `_refresh_sim_tensors()` runs. `_physics_step` only refreshes DOF state.

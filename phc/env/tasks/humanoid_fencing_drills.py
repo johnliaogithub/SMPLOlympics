@@ -95,6 +95,14 @@ class HumanoidFencingDrills(HumanoidFencing):
         # of the bout (observation one-hot and reward), so recovery to guard is learned by the stand drill
         # instead of the lunge's own recovery reward. Lunges against a live dodger keep the old behavior.
         self.lunge_recover_as_stand = cfg["env"].get("lunge_recover_as_stand", False)
+        # v24: lunges only ever started from the spawn pose, and a lunge launched after holding en garde
+        # landed 18% (vs 98% from spawn, v23). With this probability a lunge bout against a still opponent
+        # first holds the stand drill for a random lunge_guard_steps=[lo, hi] steps, then switches to the
+        # lunge. Timeouts and the thrust-line capture count from the switch. 0 = off.
+        self.lunge_guard_prob = cfg["env"].get("lunge_guard_prob", 0.0)
+        self.lunge_guard_steps = cfg["env"].get("lunge_guard_steps", [10, 40])
+        self._guard_steps = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
+        self._guard_drill = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
         # v22: penalty for the rear (left) foot ahead of the front foot, full at 0.2 m (0 = off).
         self.engarde_lfoot_fwd_w = cfg["env"].get("engarde_lfoot_fwd_w", 0.0)
         # v22: what a non-live ("frozen") opponent does. "zero" = Z=0, the PULSE prior mean (v21 and
@@ -263,6 +271,15 @@ class HumanoidFencingDrills(HumanoidFencing):
             self._spawn_half_dist[env_ids] = torch.where(
                 in_range, (self._spawn_half_dist[env_ids] + jit).clamp_min(0.3),
                 self._spawn_half_dist[env_ids])
+        # en garde before the lunge (spawn stays in lunge range, set above from new_drills)
+        self._guard_steps[env_ids] = 0
+        if self.lunge_guard_prob > 0:
+            lo, hi = self.lunge_guard_steps
+            guard = lunge_mask & ~vs_dodge & (torch.rand(n, device=self.device) < self.lunge_guard_prob)
+            g_ids = env_ids[guard]
+            self._guard_steps[g_ids] = torch.randint(lo, hi + 1, (len(g_ids),), device=self.device)
+            self._guard_drill[g_ids] = new_drills[guard]
+            self.drill_ids[g_ids] = D_STAND
 
     def _reset_envs(self, env_ids):
         if len(env_ids) > 0:
@@ -290,7 +307,7 @@ class HumanoidFencingDrills(HumanoidFencing):
     def post_physics_step(self):
         super().post_physics_step()
         # Capture the lunge "thrust line" once the agent has had time to aim.
-        cap_ids = (self.progress_buf == self.sword_ref_step).nonzero(as_tuple=False).flatten()
+        cap_ids = (self._local_progress() == self.sword_ref_step).nonzero(as_tuple=False).flatten()
         if len(cap_ids) > 0:
             tips = self.get_sword_tip_pos()
             for i in range(self.num_agents):
@@ -394,7 +411,7 @@ class HumanoidFencingDrills(HumanoidFencing):
         thrust_align_r = torch.clamp(torch.sum(sword_dir * self._sword_dir_0_list[i], dim=-1), 0.0, 1.0)
         # Before the thrust line is captured, reward AIMING the sword at the target
         # instead, so the captured line actually points at the opponent.
-        pre_ref = (self.progress_buf <= self.sword_ref_step).float()
+        pre_ref = (self._local_progress() <= self.sword_ref_step).float()
 
         prev_tip = self._prev_sword_tip_list[i]            # (N, 3)
 
@@ -593,6 +610,13 @@ class HumanoidFencingDrills(HumanoidFencing):
             learner_hit = self.sword_hit_list[0].squeeze(-1).bool()
             newly = lunge_mask & learner_hit & ~self._lunge_landed
             self._lunge_landed |= lunge_mask & learner_hit
+            # end of the en-garde lead-in: the bout becomes the lunge (fresh strike, thrust line re-captured)
+            go = (self._guard_steps > 0) & (self.progress_buf == self._guard_steps)
+            if go.any():
+                self.drill_ids[go] = self._guard_drill[go]
+                self._lunge_landed[go] = False
+                for i in range(self.num_agents):
+                    self._sword_dir_0_list[i][go] = 0.0
             if self.lunge_recover_as_stand:
                 # runs before _compute_reset/_compute_observations, so the timeout and the next obs
                 # already use the stand drill (footwork_episode_length instead of the strike timeout)
@@ -623,6 +647,10 @@ class HumanoidFencingDrills(HumanoidFencing):
             self._drill_rew_count.zero_()
             self._drill_log_n = 0
 
+    def _local_progress(self):
+        """Steps since the lunge started (progress_buf minus the en-garde lead-in; = progress_buf without one)."""
+        return self.progress_buf - self._guard_steps
+
     def _strike_len(self):
         """Per-env timeout for strike drills: the exchange window for dodge bouts and lunge-vs-dodger
         bouts (when enabled), otherwise strike_episode_length."""
@@ -642,10 +670,10 @@ class HumanoidFencingDrills(HumanoidFencing):
         done = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
         if self.strike_episode_length > 0 or self.exchange_episode_length > 0:
             slen = self._strike_len()
-            done |= strike_mask & (slen > 0) & (self.progress_buf >= slen)
+            done |= strike_mask & (slen > 0) & (self._local_progress() >= slen)
         if self.footwork_episode_length > 0:
             walk = (self.drill_ids == D_ADVANCE) | (self.drill_ids == D_RETREAT) | (self.drill_ids == D_STAND)
-            done |= walk & (self.progress_buf >= self.footwork_episode_length)
+            done |= walk & (self._local_progress() >= self.footwork_episode_length)
         if not hasattr(self, 'sword_hit_list'):
             return done
         got_hit = self.sword_hit_list[1].squeeze(-1).bool()       # opponent hit agent 0

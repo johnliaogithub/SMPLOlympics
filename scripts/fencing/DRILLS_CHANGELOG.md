@@ -10,6 +10,31 @@ config flags (logged to W&B) rather than code replacements. See v5.
 
 ---
 
+## v24 (paper recipe) — en-garde lead-in before lunges; v23 @ 144000 warm-start, 3 seeds
+
+**v23 finding** (`phc/paper/eval_motion.py`, 256 bouts each, lunge from lunge range against a still opponent):
+
+| lunge starts | bouts with a touch |
+|---|---|
+| from the spawn pose | 98% |
+| after 15 steps of en garde | 64% |
+| after 40 steps of en garde | 18% |
+
+Training only ever started lunges from the spawn pose, so en garde → lunge, the sequence the strategy
+and the paper rely on, mostly failed.
+
+**Change:** `lunge_guard_prob=0.5`, `lunge_guard_steps=[10,40]`. Half of the lunge bouts against a still
+opponent first hold the stand drill for 10–40 random steps, then switch to the lunge.
+- The strike timeout, the stand/recovery timeout and the thrust-line capture count from the switch.
+- Checked on v23: the switch lands on the exact step in 100% of guarded bouts; guarded lunges land 57%
+  before any training on this.
+- `drills/stand` now also includes these lead-in steps.
+
+**Runs:** `scripts/fencing/paper/train_drills_warmstart.sh <seed>` (`GUARD=0` gives the plain v23 recipe),
+seeds 0–2, 6000 epochs each, into `paper_drills_s<seed>/`.
+Flat baseline: `scripts/fencing/paper/train_flat_baseline.sh`.
+All runs: `scripts/fencing/paper/launch_paper_runs.sh`.
+
 ## v23 — lunge recovery handed to the stand drill; cheaper stepping in stand; v22 warm-start
 
 **v22 result** (details: `DODGE_INVESTIGATION.md`, 2026-10-21):

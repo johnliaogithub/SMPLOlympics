@@ -102,6 +102,9 @@ class HumanoidFencing(humanoid_amp_task.HumanoidAMPTask):
         # 100% -> 77% from mirrored starts). When True, order the corners by each fencer's own facing
         # (behind first). Agent 0's observation is unchanged, so existing checkpoints stay valid.
         self.bbox_obs_facing_sorted = cfg["env"].get("bbox_obs_facing_sorted", True)
+        # ENV_AUDIT E1: resetting any env zeroed EVERY env's hit-frame (win) counter, swallowing ~97% of
+        # wins. True = zero only the envs being reset. False reproduces the old behavior.
+        self.win_counter_per_env = cfg["env"].get("win_counter_per_env", True)
         self.env_ids_all = torch.arange(self.num_envs).to(self.device)
         self.warmup_time = int(250/self.dt)
         self.step_counter = 0
@@ -182,7 +185,10 @@ class HumanoidFencing(humanoid_amp_task.HumanoidAMPTask):
         return motion_ids, motion_times, root_pos, root_rot, dof_pos, root_vel, root_ang_vel, dof_vel,  rb_pos, rb_rot, body_vel, body_ang_vel
     
     def _reset_ref_state_init(self, env_ids):
-        self.sword_hit_history[:] = 0
+        if self.win_counter_per_env:
+            self.sword_hit_history[env_ids] = 0
+        else:
+            self.sword_hit_history[:] = 0
         
         num_envs = env_ids.shape[0]
         
@@ -580,6 +586,11 @@ class HumanoidFencingZ(HumanoidFencing):
     def __init__(self, cfg, sim_params, physics_engine, device_type, device_id, headless):
         super().__init__(cfg=cfg, sim_params=sim_params, physics_engine=physics_engine, device_type=device_type, device_id=device_id, headless=headless)
         self.initialize_z_models()
+        # Same fall rule as the drills env (ENV_AUDIT E4): end the bout when either head is below
+        # fall_head_height. Used by the flat baseline so both methods train under the same termination.
+        self.fall_termination = cfg["env"].get("fall_termination", False)
+        self.fall_head_height = cfg["env"].get("fall_head_height", 0.5)
+        self._fall_head_id = self._build_key_body_ids_tensor(["Head"])
         return
     
     def step(self, actions):
@@ -610,6 +621,13 @@ class HumanoidFencingZ(HumanoidFencing):
                                                            self._strike_body_ids, self.max_episode_length,
                                                            self._enable_early_termination, self._termination_heights, self.num_agents)
         self.reset_buf[:], self._terminate_buf[:] = torch.logical_or(self.reset_buf, game_done), torch.logical_or(self._terminate_buf, game_done)
+        if self.fall_termination:
+            fallen = torch.zeros_like(self.reset_buf, dtype=torch.bool)
+            for i in range(self.num_agents):
+                fallen |= self._rigid_body_pos_list[i][:, self._fall_head_id[0], 2] < self.fall_head_height
+            fallen &= self.progress_buf > 1
+            self.reset_buf[:] = torch.logical_or(self.reset_buf, fallen)
+            self._terminate_buf[:] = torch.logical_or(self._terminate_buf, fallen)
         return
 
 #####################################################################
