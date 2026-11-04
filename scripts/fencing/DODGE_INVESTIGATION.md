@@ -210,3 +210,39 @@ Also traced the exact recorder setup (1 env, test mode; `+env.viz_trace=True` no
 - Vs a dodger: lands 16% (v21 in the same env: 23%). `drills/lunge_*` drifted down 0.71 → 0.69 over the run.
 - **Cause (reward):** the recovery reward is `0.5·still + 0.3·posture + 0.2·facing`. "Still" pays for
   freezing in the deep lunge, so nothing asks it to bring the feet back to guard.
+
+---
+
+## 2026-11-04 — v25 eval: en garde works; dodge wins exchanges by retreating again
+v25 @ 156000 vs its v24 seed 1 start. 256 bouts each, 20–40 step en-garde lead-in, 28-step window from the switch,
+both fencers on the same checkpoint.
+
+| | v24 seed 1 | v25 |
+|---|---|---|
+| dodger gets hit | 75.8% | 6.2% |
+| lunge lands vs a live dodger | 78.1% | 5.1% |
+| dodger's move in the window, forward / sideways | −0.12 / 0.04 m | −0.78 / 0.07 m |
+| lunger's move in the window, forward / sideways | +0.57 / 0.35 m | +0.88 / 0.29 m |
+| falls | 0% | 0% |
+
+En garde (all criteria, learner), v24 seed 1 → v25: step 20 44% → 73%; step 30 45% → 91%; step 60 50% → 92%.
+Median split 0.25 → 0.43–0.44 m (target 0.45). The split is ready by step 5–10, and the sword now lags (78% at step 20,
+93% at step 30), so the 20-step minimum lead-in sometimes switches before the sword is up.
+
+- The dodge's gain is retreat, not evasion: only 4% of dodgers move more than 0.2 m sideways. The off-line term's 1.5 m
+  gate is probably still shut, since retreating from a ~2.1 m gap keeps the fencers apart (not re-measured).
+- W&B: `drills/dodge` 0.98 → 1.17, `drills/lunge_*` 0.86 → 0.71. `drills/stand` steady at ~0.88, then 0.81 over the last
+  30% of the run; cause unknown (the curve mixes stand, lead-ins and recovery).
+- Not measured yet: the stationary lunge launched from this wider stance, and the v24 scripted-bout falls.
+
+### Same day: "dodge barely moves" in the video (user)
+Traced the recorder (v25, one dodge bout, 27-step lead-in, switch to bout end at step ~55) and viewed frames.
+- **Recording artifact:** the camera followed the learner along the strip, which cancelled the retreat on screen. The
+  learner moved 0.53 m back (y −1.04 → −1.57) while the attacker closed 0.71 m (gap 2.15 → 2.00 m). Strike-drill clips
+  now use a camera fixed at the bout's start, in both `visualize_drills.py` and `visualize_dodge_eval.py`.
+- **Short clip:** only ~28 of the 120 frames are the dodge; the last ~65 hold the final frame.
+- **Slow start (real):** 0.04 m in the first ~8 steps after the switch, then most of the motion in the last ~15 steps.
+- **Not a sidestep (real):** root x moved 0.03 m across the window.
+- **Stance is lost (real):** split +0.45 → −0.53 m, so it walks backward, crossing its feet, not a fencing retreat.
+- **Sword drops (real, frames):** the blade points at the floor from just after the switch. The dodge reward has no sword term.
+- Single bout; the 256-bout averages are in the entry above.

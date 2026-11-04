@@ -10,6 +10,59 @@ config flags (logged to W&B) rather than code replacements. See v5.
 
 ---
 
+## v25 — exchanges begin in en garde; v24 seed 1 warm-start
+
+**v24 result** (`output/paper/metrics.csv`, 256 scripted bouts per seed; flat baseline in the last column):
+
+| | seed 0 | seed 1 | seed 2 | flat |
+|---|---|---|---|---|
+| falls | 46% | 4% | 36% | 0% |
+| time in en garde | 1% | 31% | 30% | 3.7% |
+| bouts with a touch | 1% | 62% | 0% | 100% |
+
+- Lunges launched after 40 steps of en garde land 96–100% (v23: 18%), with no falls.
+- Falls cluster in the lunge right after advancing. The likely cause, lunging from beyond the trained
+  1.8–2.2 m range, is untested.
+
+**How fast the stand drill reaches en garde** (from an exchange spawn; `survey_engarde` criteria, learner):
+
+| step | seed 0 | seed 1 | seed 2 |
+|---|---|---|---|
+| 10 | 22% | 39% | 6% |
+| 20 | 45% | 44% | 7% |
+| 40 | 56% | 48% | 10% |
+| 60 | 71% | 50% | 9% |
+
+- Sword up (>93%) by step 20 in every seed. The foot split is what limits it: median 0.23–0.31 m (seed 2: 0.16 m),
+  with the criterion at 0.25 m, so only about half of seed 1's lead-ins reach full en garde.
+- Seed 2 rarely reaches the stance at all, despite the 30% above. The two tests differ in schedule and spawn.
+
+**Change:**
+- **`exchange_guard_prob=1.0`, `exchange_guard_steps=[20,40]`:** in dodge bouts and lunges against a live dodger,
+  both fencers hold the stand drill for a random 20–40 steps, then switch on the same step. The lead-in starts at 20
+  because the sword is up by then in every seed. The 28-step window counts from the switch.
+- **Fix:** the dodge survive bonus now also counts from the switch. Without this it would pay on every step past 28.
+- **Lunge lead-in from v24 kept:** `lunge_guard_prob=0.5`, `[10,40]`. The paper recipe is unchanged, since `V25_ARGS`
+  only applies without `EXP_NAME_OVERRIDE`.
+
+**Starting effect, before training** (seed 1, 256 bouts each, timed from the switch):
+
+| | from spawn | from en garde |
+|---|---|---|
+| dodger gets hit | 12.5% | **77.3%** (median step 20) |
+| lunge lands vs a live dodger | 11.7% | **78.1%** (median step 20) |
+| falls | 0% | 0% |
+
+- Switch on the exact step in 256/256 bouts, no hits during the lead-in, survive bonus paid exactly once per survivor.
+- The lunge from en garde is a real threat inside the window for the first time, so the dodge has something to learn from.
+
+**Watch:**
+- Half of each exchange bout is now lead-in, so dodge gets fewer training steps per epoch.
+- `drills/stand` now also includes exchange lead-ins, so it isn't comparable to v24.
+- Both fencers get the switch signal on the same step, so the dodger has no reaction delay.
+
+- **Warm-start:** `paper_drills_s1` @ 150000 (lowest falls, best touch rate). Launch: `bash scripts/fencing/train_fencing_drills.sh C 6000`.
+
 ## v24 (paper recipe) — en-garde lead-in before lunges; v23 @ 144000 warm-start, 3 seeds
 
 **v23 finding** (`phc/paper/eval_motion.py`, 256 bouts each, lunge from lunge range against a still opponent):

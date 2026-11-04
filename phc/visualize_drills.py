@@ -85,10 +85,12 @@ def render_drills(cfg, task, low_level, out_path):
         for t in range(clip_len):
             # Force the drill every step.
             # (except after a landed lunge switched the bout to stand: lunge_recover_as_stand)
-            if not (getattr(task, "lunge_recover_as_stand", False) and bool(task._lunge_landed[0])):
-                task.drill_ids[:] = d
-            task.opp_drill_ids[:] = opp
-            task.opp_frozen[:] = (not is_dodge)
+            # A bout with an en-garde lead-in switches its own drills, so leave them alone.
+            if not bool(task._guard_steps[0] > 0):
+                if not (getattr(task, "lunge_recover_as_stand", False) and bool(task._lunge_landed[0])):
+                    task.drill_ids[:] = d
+                task.opp_drill_ids[:] = opp
+                task.opp_frozen[:] = (not is_dodge)
 
             obs = task.obs_buf
             z0 = low_level(obs[:N], task.drill_ids)
@@ -96,7 +98,7 @@ def render_drills(cfg, task, low_level, out_path):
             task.step(torch.cat([z0, z1], dim=0))
 
             # Optional trace (+env.viz_trace=True): what the stand clip actually does, step by step.
-            if cfg.env.get("viz_trace", False) and d in (D_STAND, D_LUNGE_UPPER, D_LUNGE_GROIN) and (t % 5 == 0 or t == clip_len - 1):
+            if cfg.env.get("viz_trace", False) and d in (D_STAND, D_LUNGE_UPPER, D_LUNGE_GROIN, D_DODGE) and (t % 5 == 0 or t == clip_len - 1):
                 head = int(task._build_key_body_ids_tensor(["Head"])[0])
                 bp0, bp1 = task._rigid_body_pos_list[0][0], task._rigid_body_pos_list[1][0]
                 r0, r1 = task._humanoid_root_states_list[0][0, :2], task._humanoid_root_states_list[1][0, :2]
@@ -106,7 +108,9 @@ def render_drills(cfg, task, low_level, out_path):
                 split0 = float(((bp0[task._right_foot_id[0], :2] - bp0[task._left_foot_id[0], :2]) * fwd).sum())
                 up0 = bp0[task._chest_id[0]] - bp0[task._pelvis_id[0]]; up0 = up0 / up0.norm()
                 hit0 = bool(task.sword_hit_list[0][0]) if hasattr(task, "sword_hit_list") else False
-                print(f"[trace {DRILL_NAMES[d]} t={t:3d}] learner: head_z={float(bp0[head, 2]):.2f} spine_up={float(up0[2]):.2f} "
+                print(f"[trace {DRILL_NAMES[d]} t={t:3d}] drill={DRILL_NAMES[task.drill_ids[0]]} opp_drill={DRILL_NAMES[task.opp_drill_ids[0]]} "
+                      f"guard={int(task._guard_steps[0])} root0=({float(r0[0]):+.2f},{float(r0[1]):+.2f}) root1=({float(r1[0]):+.2f},{float(r1[1]):+.2f}) "
+                      f"got_hit={bool(task.sword_hit_list[1][0])} learner: head_z={float(bp0[head, 2]):.2f} spine_up={float(up0[2]):.2f} "
                       f"hit={hit0} landed={bool(task._lunge_landed[0])} | "
                       f"opp: frozen={bool(task.opp_frozen[0])} head_z={float(bp1[head, 2]):.2f} "
                       f"spine_up={float(up1[2]):.2f} lean_toward_learner={lean1:+.2f}m | learner: split(R ahead of L)={split0:+.2f}m "
@@ -120,8 +124,13 @@ def render_drills(cfg, task, low_level, out_path):
                     writer.append_data(label_frame(prev_img, f"{d}: {DRILL_NAMES[d]}", subtitle + "   [episode ended]"))
                 break
 
-            # Side-on follow camera on agent 0.
+            # Side-on follow camera on agent 0. Strike drills get a fixed camera on the spawn midpoint
+            # instead: following along the strip cancels a retreat on screen (the fencer stays centered).
             root = task._humanoid_root_states_list[0][0, 0:3].cpu().numpy()
+            if d in (D_LUNGE_UPPER, D_LUNGE_GROIN, D_DODGE):
+                if t == 0:
+                    cam_root = (root + task._humanoid_root_states_list[1][0, 0:3].cpu().numpy()) / 2
+                root = cam_root
             gym.set_camera_location(
                 cam, env0,
                 gymapi.Vec3(root[0] + 4.0, root[1], 1.6),

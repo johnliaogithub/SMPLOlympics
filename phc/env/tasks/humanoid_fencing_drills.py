@@ -103,6 +103,12 @@ class HumanoidFencingDrills(HumanoidFencing):
         self.lunge_guard_steps = cfg["env"].get("lunge_guard_steps", [10, 40])
         self._guard_steps = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
         self._guard_drill = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
+        self._guard_opp = torch.full((self.num_envs,), D_STAND, dtype=torch.long, device=self.device)
+        # v25: exchanges (dodge bouts, lunges against a live dodger) begin in en garde. With this probability
+        # BOTH fencers hold the stand drill for a random exchange_guard_steps=[lo, hi] steps, then switch on
+        # the same step to their exchange drills. The exchange window counts from the switch. 0 = off.
+        self.exchange_guard_prob = cfg["env"].get("exchange_guard_prob", 0.0)
+        self.exchange_guard_steps = cfg["env"].get("exchange_guard_steps", [20, 40])
         # v22: penalty for the rear (left) foot ahead of the front foot, full at 0.2 m (0 = off).
         self.engarde_lfoot_fwd_w = cfg["env"].get("engarde_lfoot_fwd_w", 0.0)
         # v22: what a non-live ("frozen") opponent does. "zero" = Z=0, the PULSE prior mean (v21 and
@@ -279,7 +285,18 @@ class HumanoidFencingDrills(HumanoidFencing):
             g_ids = env_ids[guard]
             self._guard_steps[g_ids] = torch.randint(lo, hi + 1, (len(g_ids),), device=self.device)
             self._guard_drill[g_ids] = new_drills[guard]
+            self._guard_opp[g_ids] = opp[guard]
             self.drill_ids[g_ids] = D_STAND
+        if self.exchange_guard_prob > 0:
+            lo, hi = self.exchange_guard_steps
+            guard = (dodge_mask | vs_dodge) & (torch.rand(n, device=self.device) < self.exchange_guard_prob)
+            g_ids = env_ids[guard]
+            self._guard_steps[g_ids] = torch.randint(lo, hi + 1, (len(g_ids),), device=self.device)
+            self._guard_drill[g_ids] = new_drills[guard]
+            self._guard_opp[g_ids] = opp[guard]
+            self.drill_ids[g_ids] = D_STAND
+            self.opp_drill_ids[g_ids] = D_STAND
+            self.opp_frozen[g_ids] = True
 
     def _reset_envs(self, env_ids):
         if len(env_ids) > 0:
@@ -543,7 +560,7 @@ class HumanoidFencingDrills(HumanoidFencing):
             evade = torch.where(gap < self.dodge_evade_gate, offline_r, torch.full_like(offline_r, self.dodge_far_value))
             # explicit win: survived to the strike-episode timeout without being hit
             slen = self._strike_len()
-            survived = ((slen > 0) & (self.progress_buf >= slen) & (im_hit < 0.5)).float()
+            survived = ((slen > 0) & (self._local_progress() >= slen) & (im_hit < 0.5)).float()
             lf_xy = self._rigid_body_pos_list[i][:, self._left_foot_id[0], 0:2]
             back_drift = torch.clamp_min(-torch.sum((lf_xy - self._left_foot_anchor_list[i]) * tar_dir, dim=-1), 0.0)
             foot_back_pen = torch.clamp(back_drift / 0.3, 0.0, 1.0)                 # rear foot stepped back
@@ -614,6 +631,8 @@ class HumanoidFencingDrills(HumanoidFencing):
             go = (self._guard_steps > 0) & (self.progress_buf == self._guard_steps)
             if go.any():
                 self.drill_ids[go] = self._guard_drill[go]
+                self.opp_drill_ids[go] = self._guard_opp[go]
+                self.opp_frozen[go] = self._guard_opp[go] == D_STAND
                 self._lunge_landed[go] = False
                 for i in range(self.num_agents):
                     self._sword_dir_0_list[i][go] = 0.0
@@ -648,7 +667,7 @@ class HumanoidFencingDrills(HumanoidFencing):
             self._drill_log_n = 0
 
     def _local_progress(self):
-        """Steps since the lunge started (progress_buf minus the en-garde lead-in; = progress_buf without one)."""
+        """Steps since the strike drill started (progress_buf minus the en-garde lead-in; = progress_buf without one)."""
         return self.progress_buf - self._guard_steps
 
     def _strike_len(self):

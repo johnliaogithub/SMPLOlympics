@@ -49,9 +49,10 @@ def render(cfg, task, low_level, out_path):
         dx = dy = 0.0
         scored = got_hit = False
         for t in range(max_steps):
-            task.drill_ids[:] = D_DODGE
-            task.opp_drill_ids[:] = target
-            task.opp_frozen[:] = False
+            if bool(task._local_progress()[0] >= 0):   # after any en-garde lead-in
+                task.drill_ids[:] = D_DODGE
+                task.opp_drill_ids[:] = target
+                task.opp_frozen[:] = False
             obs = task.obs_buf
             z0 = low_level(obs[:N], task.drill_ids)
             z1 = low_level(obs[N:2 * N], task.opp_drill_ids)
@@ -63,7 +64,9 @@ def render(cfg, task, low_level, out_path):
             dx, dy = lx - x0, ly - y0
             r0 = task._humanoid_root_states_list[0][0, 0:3].cpu().numpy()
             r1 = task._humanoid_root_states_list[1][0, 0:3].cpu().numpy()
-            mid = (r0 + r1) / 2.0
+            # fixed at the bout's start: following the fencers cancels a retreat on screen
+            if t == 0:
+                mid = (r0 + r1) / 2.0
             gym.set_camera_location(cam, env0,
                                     gymapi.Vec3(mid[0] + 5.0, mid[1], 2.0),
                                     gymapi.Vec3(mid[0], mid[1], 1.0))

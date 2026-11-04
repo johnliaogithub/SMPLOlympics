@@ -55,8 +55,13 @@ fi
 # Lunge-only diagnostic gets its OWN experiment dir so it never touches v4.
 case "$PHASE" in
   L|l) EXP_NAME=fencing_lunge_only ;;
-  *)   EXP_NAME=${EXP_NAME_OVERRIDE:-fencing_drills_v23} ;;
+  *)   EXP_NAME=${EXP_NAME_OVERRIDE:-fencing_drills_v25} ;;
 esac
+# v24/v25 additions apply to the main line only; the paper runs set EXP_NAME_OVERRIDE and pass their own recipe.
+V25_ARGS=""
+if [[ -z "$EXP_NAME_OVERRIDE" ]] && [[ "$EXP_NAME" == fencing_drills_v25 ]]; then
+    V25_ARGS="+env.lunge_guard_prob=0.5 +env.lunge_guard_steps=[10,40] +env.exchange_guard_prob=1.0 +env.exchange_guard_steps=[20,40]"
+fi
 OUTPUT_DIR=output/HumanoidIm/${EXP_NAME}
 
 case "$PHASE" in
@@ -178,6 +183,7 @@ python phc/run_hydra.py \
     learning.params.config.task_reward_w=1.0 \
     learning.params.config.disc_reward_w=0.0 \
     learning.params.config.disc_coef=0.0 \
+    ${V25_ARGS} \
     ${DRILL_ARGS} \
     ${CHECKPOINT_ARG} \
     ${MAX_EPOCHS_ARG} \
