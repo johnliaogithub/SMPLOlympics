@@ -10,6 +10,41 @@ config flags (logged to W&B) rather than code replacements. See v5.
 
 ---
 
+## v26 — closer exchanges, dodge keeps its guard; v25 warm-start
+
+**v25 result** (details: `DODGE_INVESTIGATION.md`, 2026-11-04):
+- En garde works: full stance 91% by step 30 (v24 seed 1: 45%), median split 0.44 m.
+- Dodger hit only 6%, lunge lands 5%, but by walking back 0.78 m from ~2 m in a 28-step window. Sideways 0.07 m.
+- The dodge drops its sword and crosses its feet while retreating (split +0.45 → −0.53 m, one traced bout).
+
+**Change:**
+- **`exchange_spawn_half_dist=[0.6,0.75]`:** exchange bouts spawn closer; stationary lunges stay at 1.0.
+- **`dodge_guard_w=0.15`:** adds `0.15·(sword + clamp(split/0.25, 0, 1))` per step to the dodge reward, at most 8.4 over a
+  bout against ±20 for surviving or being hit.
+- **`exchange_guard_steps=[30,40]`:** the sword is up 93% by step 30 (78% at step 20).
+
+**Starting effect, before training** (v25 policy, 256 bouts each, lead-in 30–40):
+
+| half-distance | gap at the switch p10/p50/p90 | dodger gets hit |
+|---|---|---|
+| 0.85 | 1.82 / 1.92 / 2.05 m | 18.8% |
+| 0.7–0.85 | 1.61 / 1.80 / 1.95 m | 48.4% |
+| 0.7 | 1.41 / 1.62 / 1.79 m | 73.8% |
+| **0.6–0.75 (v26)** | 1.27 / 1.56 / 1.77 m | **70.7%** (median step 10) |
+
+- The gap exceeds twice the half-distance because of lateral spawn jitter and drift during the lead-in.
+- Lunge vs a live dodger at v26 range: lands 73.4% (median step 9).
+- Survivors at v26 range still mostly retreat: 0.73 m back, 0.14 m sideways.
+- Blades touch in 10 hit-steps of dodge lead-ins and 7 of lunge lead-ins, out of ~9,000 lead-in steps. No effect, since the drill is still stand.
+
+**Watch:**
+- The dodge has ~10 steps (0.33 s) to act, and the switch signal is simultaneous. If that is too short to learn, widen the range.
+- `dodge_far_value=0.5` still pays more than a small off-line offset, so retreating past the 1.5 m gate can still pay
+  (0.1/step). Not changed.
+- Self-play: if both the dodge and the lunge stop changing, it has stalled.
+
+- **Warm-start:** v25 @ 156000. Launch: `bash scripts/fencing/train_fencing_drills.sh C 6000`.
+
 ## v25 — exchanges begin in en garde; v24 seed 1 warm-start
 
 **v24 result** (`output/paper/metrics.csv`, 256 scripted bouts per seed; flat baseline in the last column):

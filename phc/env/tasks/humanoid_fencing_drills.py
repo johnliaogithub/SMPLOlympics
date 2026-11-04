@@ -109,6 +109,12 @@ class HumanoidFencingDrills(HumanoidFencing):
         # the same step to their exchange drills. The exchange window counts from the switch. 0 = off.
         self.exchange_guard_prob = cfg["env"].get("exchange_guard_prob", 0.0)
         self.exchange_guard_steps = cfg["env"].get("exchange_guard_steps", [20, 40])
+        # v26: exchange bouts spawn at a random half-distance in [lo, hi] instead of strike_spawn_half_dist
+        # (v25 survived 94% by walking back from ~2 m). Stationary lunges keep theirs. Empty = off.
+        self.exchange_spawn_half_dist = cfg["env"].get("exchange_spawn_half_dist", [])
+        # v26: the dodge also pays for keeping its guard: sword term of the en-garde reward, and the right
+        # foot staying ahead (v25 dropped the sword and walked back crossing its feet). 0 = off.
+        self.dodge_guard_w = cfg["env"].get("dodge_guard_w", 0.0)
         # v22: penalty for the rear (left) foot ahead of the front foot, full at 0.2 m (0 = off).
         self.engarde_lfoot_fwd_w = cfg["env"].get("engarde_lfoot_fwd_w", 0.0)
         # v22: what a non-live ("frozen") opponent does. "zero" = Z=0, the PULSE prior mean (v21 and
@@ -277,6 +283,10 @@ class HumanoidFencingDrills(HumanoidFencing):
             self._spawn_half_dist[env_ids] = torch.where(
                 in_range, (self._spawn_half_dist[env_ids] + jit).clamp_min(0.3),
                 self._spawn_half_dist[env_ids])
+        if len(self.exchange_spawn_half_dist) > 0:
+            lo, hi = self.exchange_spawn_half_dist
+            exch_ids = env_ids[dodge_mask | vs_dodge]
+            self._spawn_half_dist[exch_ids] = lo + (hi - lo) * torch.rand(len(exch_ids), device=self.device)
         # en garde before the lunge (spawn stays in lunge range, set above from new_drills)
         self._guard_steps[env_ids] = 0
         if self.lunge_guard_prob > 0:
@@ -567,6 +577,8 @@ class HumanoidFencingDrills(HumanoidFencing):
             r_dodge = (0.2 * facing_r + self.dodge_evade_w * evade
                        - self.dodge_imhit_w * im_hit - self.dodge_footback_w * foot_back_pen
                        + self.dodge_survive_bonus * survived)
+            if self.dodge_guard_w > 0:
+                r_dodge = r_dodge + self.dodge_guard_w * (sword_g + torch.clamp(split_d / 0.25, 0.0, 1.0))
         elif self.dodge_pure:
             # PURE evasive slip: keep the opponent's tip OFF your targets by moving your BODY
             # off-line -- NOT by reaching the blade forward and NOT by retreating. avoid_r rewards
