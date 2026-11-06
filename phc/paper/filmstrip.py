@@ -25,14 +25,20 @@ from phc.train_fencing_strategy import FrozenLowLevelPolicy
 from phc.env.tasks.humanoid_fencing_drills import NUM_DRILLS, D_STAND, D_LUNGE_UPPER, D_LUNGE_GROIN, DRILL_NAMES
 
 
-def grab(task, cam_dist):
+_FIXED_CAM = {}
+
+
+def grab(task, cam_dist, fixed=True):
     gym, sim, env0, cam = task.gym, task.sim, task.envs[0], task.recorder_camera_handles[0]
-    r0 = task._humanoid_root_states_list[0][0, 0:3].cpu().numpy()
-    r1 = task._humanoid_root_states_list[1][0, 0:3].cpu().numpy()
-    mid = 0.5 * (r0 + r1)
-    # side-on, perpendicular to the line between the fencers
-    d = r1[:2] - r0[:2]
-    n = np.array([-d[1], d[0]]) / (np.linalg.norm(d) + 1e-6)
+    # side-on, perpendicular to the line between the fencers, aimed at their midpoint. fixed=True keeps
+    # the first frame's pose for the whole clip (a tracking camera makes filmstrip frames incomparable).
+    if not fixed or "mid" not in _FIXED_CAM:
+        r0 = task._humanoid_root_states_list[0][0, 0:3].cpu().numpy()
+        r1 = task._humanoid_root_states_list[1][0, 0:3].cpu().numpy()
+        d = r1[:2] - r0[:2]
+        _FIXED_CAM["mid"] = 0.5 * (r0 + r1)
+        _FIXED_CAM["n"] = np.array([-d[1], d[0]]) / (np.linalg.norm(d) + 1e-6)
+    mid, n = _FIXED_CAM["mid"], _FIXED_CAM["n"]
     gym.set_camera_location(cam, env0, gymapi.Vec3(mid[0] + cam_dist * n[0], mid[1] + cam_dist * n[1], 1.2),
                             gymapi.Vec3(mid[0], mid[1], 0.9))
     if task.device != 'cpu':
