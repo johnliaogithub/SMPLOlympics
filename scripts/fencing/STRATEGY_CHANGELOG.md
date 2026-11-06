@@ -8,6 +8,25 @@ Newest version on top.
 
 ---
 
+## paper (CVIS) — strategy on drills-v24, one per drills seed; head-to-head vs flat baseline (2026-11-06)
+
+**Built on:** `paper_drills_s{0,1,2}` (drills-v24). Reward and hit rules as strategy-v10.
+**Changes vs v10:**
+- Fall rule as in the drills env (head below 0.5 m ends the bout). A learner fall is a loss, like body contact
+  and leaving the strip. Logged as `strategy/fall_end_rate`.
+- Loader fix (also `FlatPolicy`): rl_games clamps normalized observations to ±5; the loaders did not.
+  Paper motion metrics moved by under 3 points (falls 28.5% → 23.3%).
+
+**Runs:** `scripts/fencing/paper/train_strategy.sh <seed>`, 2000 iterations, `paper_strategy_s<seed>/`.
+Self-play, last 100 iterations: learner touch 44 / 61 / 60%, falls 2.8 / 1.7 / 3.2%, all 8 drills used.
+
+**Head-to-head** (`scripts/fencing/paper/eval_h2h.sh`, `output/paper/h2h.csv`): 3 m spawn, both sides,
+contact rule on/off. Strategy's share of decided touches: s0 42–43%, s1 62–64%, s2 80–80.5% (mean ≈62%).
+Side and contact rule change it by under 1 point. Falls, out of bounds and timeouts are each under 0.5%.
+Caveats: one baseline seed; budgets not matched; drill choice is sampled, as in training.
+
+---
+
 ## ⚠️ ENVIRONMENT FIX — hit-detection tunneling (full write-up in DRILLS_CHANGELOG)
 
 The shared `check_sword_hit` sampled the sword tip once per 30 Hz control step with no CCD, so fast

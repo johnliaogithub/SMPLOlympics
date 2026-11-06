@@ -64,7 +64,8 @@ class FlatPolicy:
     @torch.no_grad()
     def __call__(self, obs):
         obs = torch.clamp(obs, -5.0, 5.0)
-        return self.actor((obs - self.mean) / torch.sqrt(self.var + 1e-5))
+        # rl_games clamps again after normalizing (RunningMeanStd.forward); match training
+        return self.actor(torch.clamp((obs - self.mean) / torch.sqrt(self.var + 1e-5), -5.0, 5.0))
 
 
 class MotionMetrics:

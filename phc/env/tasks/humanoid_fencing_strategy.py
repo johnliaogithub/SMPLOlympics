@@ -94,6 +94,14 @@ class HumanoidFencingStrategy(HumanoidFencingDrills):
                                                        self._strike_body_ids, self.max_episode_length,
                                                        self._enable_early_termination, self._termination_heights, self.num_agents)
         self.reset_buf[:], self._terminate_buf[:] = torch.logical_or(self.reset_buf, game_done), torch.logical_or(self._terminate_buf, game_done)
+        # same fall rule as the drills env (ENV_AUDIT E4): either head below fall_head_height ends the bout
+        if self.fall_termination:
+            fallen = torch.zeros_like(self.reset_buf, dtype=torch.bool)
+            for i in range(self.num_agents):
+                fallen |= self._rigid_body_pos_list[i][:, self._head_id[0], 2] < self.fall_head_height
+            fallen &= self.progress_buf > 1
+            self.reset_buf[:] = torch.logical_or(self.reset_buf, fallen)
+            self._terminate_buf[:] = torch.logical_or(self._terminate_buf, fallen)
         return
 
 
@@ -147,6 +155,7 @@ class HumanoidFencingStrategyZ(HumanoidFencingStrategy):
         redloss_ev = torch.zeros(N, device=self.device)
         contact_ev = torch.zeros(N, device=self.device)
         oob_ev = torch.zeros(N, device=self.device)
+        fall_ev = torch.zeros(N, device=self.device)
         timeout_ev = torch.zeros(N, device=self.device)
         # actual bout-length accumulation (every termination, not window-latched)
         boutlen_sum = torch.zeros((), device=self.device)
@@ -171,7 +180,10 @@ class HumanoidFencingStrategyZ(HumanoidFencingStrategy):
             lr = self._humanoid_root_states_list[0]
             learner_oob = ((lr[..., 0] < self.bounding_box[0]) | (lr[..., 0] > self.bounding_box[1])
                            | (lr[..., 1] < self.bounding_box[2]) | (lr[..., 1] > self.bounding_box[3]))
-            bad_end = (self._body_contact | learner_oob) & newly & (~is_win)
+            # With fall_termination, the learner falling is also a loss (else falling escapes the time cost).
+            learner_fell = (self._rigid_body_pos_list[0][:, self._head_id[0], 2] < self.fall_head_height
+                            if self.fall_termination else torch.zeros_like(learner_oob))
+            bad_end = (self._body_contact | learner_oob | learner_fell) & newly & (~is_win)
             outcome = torch.where(bad_end,
                                   torch.full_like(outcome, -self.contact_term_pen), outcome)
             sparse = torch.where(newly, outcome, sparse)
@@ -197,11 +209,13 @@ class HumanoidFencingStrategyZ(HumanoidFencingStrategy):
             ones = torch.ones_like(win_ev)
             contact_end = newly & self._body_contact & (~is_win)
             oob_end = newly & learner_oob & (~is_win) & (~self._body_contact)
-            timeout_end = newly & (~is_win) & (~self._body_contact) & (~learner_oob)
+            fall_end = newly & learner_fell & (~is_win) & (~self._body_contact) & (~learner_oob)
+            timeout_end = newly & (~is_win) & (~self._body_contact) & (~learner_oob) & (~learner_fell)
             win_ev = torch.where(newly & green, ones, win_ev)
             redloss_ev = torch.where(newly & red & (~green), ones, redloss_ev)
             contact_ev = torch.where(contact_end, ones, contact_ev)
             oob_ev = torch.where(oob_end, ones, oob_ev)
+            fall_ev = torch.where(fall_end, ones, fall_ev)
             timeout_ev = torch.where(timeout_end, ones, timeout_ev)
 
             # actual bout length: for EVERY env ending this step (not window-latched), record its
@@ -238,6 +252,7 @@ class HumanoidFencingStrategyZ(HumanoidFencingStrategy):
         self._last_redloss = redloss_ev    # opponent touch scored (REAL loss)
         self._last_contact = contact_ev    # ended by body contact
         self._last_oob = oob_ev            # ended by learner going out of bounds
+        self._last_fall = fall_ev          # ended by the learner falling
         self._last_timeout = timeout_ev    # ended by timeout (draw) / opponent OOB
         self._last_boutlen_sum = boutlen_sum
         self._last_boutlen_cnt = boutlen_cnt

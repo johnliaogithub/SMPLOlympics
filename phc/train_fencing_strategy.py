@@ -72,7 +72,8 @@ class FrozenLowLevelPolicy:
         # regardless of when the env last recomputed its observation
         obs[:, -self.num_drills:] = F.one_hot(drill_ids, self.num_drills).float()
         obs = torch.clamp(obs, -5.0, 5.0)
-        obs_n = (obs - self.mean) / torch.sqrt(self.var + 1e-5)
+        # rl_games clamps again after normalizing (RunningMeanStd.forward); match training
+        obs_n = torch.clamp((obs - self.mean) / torch.sqrt(self.var + 1e-5), -5.0, 5.0)
         return self.actor(obs_n)
 
 
@@ -156,7 +157,7 @@ def train(cfg, task, env):
         ep_dense = torch.zeros(N, device=device)
         ep_contact = torch.zeros(N, device=device)
         ep_time_pen = torch.zeros(N, device=device)
-        win_count = loss_count = contact_count = oob_count = timeout_count = end_count = 0
+        win_count = loss_count = contact_count = oob_count = fall_count = timeout_count = end_count = 0
         boutlen_sum = boutlen_cnt = 0.0
         drill_hist = torch.zeros(NUM_DRILLS, device=device)
 
@@ -187,6 +188,7 @@ def train(cfg, task, env):
             loss_count += task._last_redloss.sum().item()
             contact_count += task._last_contact.sum().item()
             oob_count += task._last_oob.sum().item()
+            fall_count += task._last_fall.sum().item()
             timeout_count += task._last_timeout.sum().item()
             boutlen_sum += task._last_boutlen_sum.item()
             boutlen_cnt += task._last_boutlen_cnt.item()
@@ -243,6 +245,7 @@ def train(cfg, task, env):
                 "strategy/loss_rate": loss_count / e,                # REAL opponent touch
                 "strategy/contact_end_rate": contact_count / e,      # ended by body contact
                 "strategy/oob_end_rate": oob_count / e,              # learner out of bounds
+                "strategy/fall_end_rate": fall_count / e,            # learner fell
                 "strategy/timeout_rate": timeout_count / e,          # draw / opponent OOB
                 "strategy/mean_bout_len": boutlen_sum / max(boutlen_cnt, 1),  # physics steps
                 "strategy/win_frame_hit": float(task.win_frame_hit),          # curriculum value
@@ -260,7 +263,7 @@ def train(cfg, task, env):
             e = max(end_count, 1)
             print(f"[it {it}] sparse={rew_b.sum(0).mean():.3f} "
                   f"win={win_count/e:.2f} loss={loss_count/e:.2f} "
-                  f"contact={contact_count/e:.2f} oob={oob_count/e:.2f} "
+                  f"contact={contact_count/e:.2f} oob={oob_count/e:.2f} fall={fall_count/e:.2f} "
                   f"len={boutlen_sum/max(boutlen_cnt,1):.0f}")
 
         if it > 0 and it % save_every == 0:
