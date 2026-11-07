@@ -1,3 +1,33 @@
+# Fencing from drills (fork of SMPLOlympics)
+
+**This repository is a fork of [SMPLOlympics](https://github.com/SMPLOlympics/SMPLOlympics)**
+(Luo et al., [paper](https://arxiv.org/abs/2407.00187)). The simulator, the fencing task, the PULSE motion prior
+and the installation steps below are theirs. This fork adds a research project on top: training natural fencing
+**without fencing motion capture**, using only rewards and a curriculum on the frozen PULSE prior.
+
+**What this fork adds**
+- A drill-conditioned policy: one network, 8 fencing drills (advance, retreat, en garde, step left/right,
+  lunge high/low, dodge), each with its own reward: `phc/env/tasks/humanoid_fencing_drills.py`
+- A strategy policy that picks a drill every 15 steps, on top of the frozen drills policy:
+  `phc/env/tasks/humanoid_fencing_strategy.py`, `phc/train_fencing_strategy.py`
+- Paper scripts (training, evaluation, figures): `scripts/fencing/paper/`, `phc/paper/`
+- Research logs: `scripts/fencing/DRILLS_CHANGELOG.md`, `scripts/fencing/STRATEGY_CHANGELOG.md`,
+  `scripts/fencing/ENV_AUDIT.md` (simulator bugs found and fixed)
+
+**Reproducing the paper** (after the installation steps below)
+```
+bash scripts/fencing/paper/train_drills_warmstart.sh <seed>   # drills policy (warm start, see DRILLS_CHANGELOG v24)
+bash scripts/fencing/paper/train_flat_baseline.sh 0           # flat self-play baseline
+bash scripts/fencing/paper/train_strategy.sh <seed>           # strategy on a trained drills seed
+bash scripts/fencing/paper/make_figures.sh                    # motion metrics + figures
+bash scripts/fencing/paper/eval_h2h.sh <seed> <side 0|1> <tag> # strategy vs baseline bouts
+```
+Scripts contain absolute paths from our machine (e.g. `LD_LIBRARY_PATH`); adjust them to yours.
+
+---
+
+*Original SMPLOlympics README follows.*
+
 [Repo Under Construction]
 
 # SMPL Olympics 
