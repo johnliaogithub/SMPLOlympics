@@ -14,7 +14,7 @@
 import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import make_task, FlatPolicy  # noqa: E402
+from common import make_task, FlatPolicy, MotionMetrics  # noqa: E402
 
 import torch  # noqa: E402
 import hydra  # noqa: E402
@@ -63,6 +63,8 @@ def main(cfg_hydra: DictConfig) -> None:
         os.makedirs("output/paper/video", exist_ok=True)
         writer = imageio.get_writer(f"output/paper/video/{vid}.mp4", fps=30, macro_block_size=None)
         frames, first_end = [], None
+    # side 2 without video: motion metrics of agent 0's first bout, as eval_motion.py does for the baseline
+    M = MotionMetrics(task) if (side == 2 and not vid) else None
     with torch.no_grad():
         for t in range(T):
             obs = torch.clamp(task.obs_buf, -5.0, 5.0)
@@ -98,6 +100,9 @@ def main(cfg_hydra: DictConfig) -> None:
             done = task.reset_buf.bool()
             if t < 2:          # first steps after the initial reset are not real bouts
                 done[:] = False
+            if M is not None:
+                M.update()
+                M.end_bouts(done)
             if vid and first_end is None and t >= 2 and bool(task.reset_buf[0]):
                 first_end = t
             if done.any():
@@ -140,6 +145,13 @@ def main(cfg_hydra: DictConfig) -> None:
             return f"t = {i / 30:.1f} s: " + (f"{pretty(a)} / {pretty(b)}" if b else pretty(a))
         compose([frames[i] for i in idx], [cap(i) for i in idx], f"output/paper/figures/filmstrip_{vid}.png")
         print(f"[h2h] video output/paper/video/{vid}.mp4, first bout ends at step {first_end}")
+        return
+    if M is not None:
+        row = {"tag": e.h2h_tag, "method": "strategy", "checkpoint": e.h2h_strategy_checkpoint,
+               "steps_per_bout": T, **M.summary()}
+        for kk, v in row.items():
+            print(f"  {kk:18s} {v}")
+        write_row(row)          # output/paper/metrics.csv
         return
     b = max(bouts, 1)
     row = {"tag": e.h2h_tag, "strategy_ckpt": e.h2h_strategy_checkpoint, "strategy_side": side,
