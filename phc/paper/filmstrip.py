@@ -121,6 +121,9 @@ def run_flat(cfg, task, ckpt, writer, cam_dist):
     op = ckpt.replace(".pth", "_op.pth")
     pol1 = FlatPolicy(op, device=task.device) if os.path.exists(op) else pol0
     steps = [int(s) for s in cfg.env.get("film_steps", [20, 60, 100, 140])]
+    # the baseline env picks its curriculum stage from step_counter; stage 0 disables win endings, so
+    # start in the final stage, as at the end of training
+    task.step_counter = max(task.warmup_time + 10, task.curriculum_stages[-1]["step_threshold"] + 1)
     task.reset()
     frames = []
     for t in range(max(steps) + 1):
@@ -132,7 +135,9 @@ def run_flat(cfg, task, ckpt, writer, cam_dist):
         if bool(task.reset_buf[0]):
             print(f"[film] bout ended at step {t}")
             break
-    steps = [min(s, len(frames) - 1) for s in steps]
+    if len(frames) - 1 < max(steps):
+        # the bout ended early (e.g. a short win rule): spread the frames over the whole bout instead
+        steps = np.linspace(0, len(frames) - 1, len(steps)).round().astype(int).tolist()
     return [frames[s] for s in steps], [f"t = {s / 30:.1f} s" for s in steps], steps
 
 

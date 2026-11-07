@@ -85,7 +85,9 @@ def run_flat(cfg, task, ckpt):
     op = ckpt.replace(".pth", "_op.pth")
     pol1 = FlatPolicy(op, device=task.device) if os.path.exists(op) else pol0
     N, T = task.num_envs, int(cfg.env.get("eval_steps", 240))
-    task.step_counter = task.warmup_time + 10
+    # the baseline env picks its curriculum stage from step_counter; stage 0 disables win endings, so
+    # start in the final stage, as at the end of training
+    task.step_counter = max(task.warmup_time + 10, task.curriculum_stages[-1]["step_threshold"] + 1)
     task.reset()
     M = MotionMetrics(task)
     for _ in range(T):
