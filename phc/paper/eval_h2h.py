@@ -6,6 +6,7 @@
 # bout; the frozen drills policy turns (obs, drill) into PULSE latents. The flat policy reads the first
 # 512 obs dims (the shared fencing observation; the drills env appends only its own drill one-hot).
 # Sides: env.h2h_strategy_side = 0 or 1 (which agent the strategy controls); run both.
+# env.h2h_strategy_side = 2: strategy self-play (both fencers use strategy + drills), for the video only.
 # Body contact (root gap < contact_term_dist) ends a bout with no winner; contact_term_dist=0 disables it.
 #
 #   bash scripts/fencing/paper/eval_h2h.sh <strategy seed> <side> <tag> [overrides]
@@ -42,8 +43,10 @@ def main(cfg_hydra: DictConfig) -> None:
     task.win_frame_hit = float(e.get("win_frame_hit", 2))     # end value of the training ramp
     task.step_counter = task.warmup_time + 10
     task.reset()
-    s_rows, f_rows = (slice(0, N), slice(N, 2 * N)) if side == 0 else (slice(N, 2 * N), slice(0, N))
+    s_rows, f_rows = (slice(0, N), slice(N, 2 * N)) if side != 1 else (slice(N, 2 * N), slice(0, N))
     drills = torch.zeros(N, dtype=torch.long, device=dev)
+    drills_b = torch.zeros(N, dtype=torch.long, device=dev)   # agent 1's drills in self-play (side 2)
+    drill_log = []
     k = torch.zeros(N, dtype=torch.long, device=dev)          # steps since the last strategy decision
     names = ["strategy_touch", "flat_touch", "double_touch", "contact", "strategy_oob", "flat_oob",
              "strategy_fall", "flat_fall", "timeout"]
@@ -69,13 +72,23 @@ def main(cfg_hydra: DictConfig) -> None:
                 pick = torch.distributions.Categorical(logits=logits).sample()
                 drills[redo] = pick[redo]
                 usage += torch.bincount(pick[redo], minlength=NUM_DRILLS).float()
-            if side == 0:
+                if side == 2:
+                    logits_b, _ = net(obs[f_rows])
+                    pick_b = torch.distributions.Categorical(logits=logits_b).sample()
+                    drills_b[redo] = pick_b[redo]
+            if side == 2:
                 task.drill_ids[:] = drills
+                task.opp_drill_ids[:] = drills_b
+                task.step(torch.cat([low(obs[s_rows], drills), low(obs[f_rows], drills_b)], 0))
             else:
-                task.opp_drill_ids[:] = drills
-            z_s = low(obs[s_rows], drills)
-            z_f = flat(obs[f_rows][:, :flat_dim])
-            task.step(torch.cat([z_s, z_f] if side == 0 else [z_f, z_s], 0))
+                if side == 0:
+                    task.drill_ids[:] = drills
+                else:
+                    task.opp_drill_ids[:] = drills
+                z_s = low(obs[s_rows], drills)
+                z_f = flat(obs[f_rows][:, :flat_dim])
+                task.step(torch.cat([z_s, z_f] if side == 0 else [z_f, z_s], 0))
+            drill_log.append((DRILL_NAMES[int(drills[0])], DRILL_NAMES[int(drills_b[0])] if side == 2 else ""))
             if vid:
                 img = grab(task, float(e.get("film_cam_dist", 4.5)))
                 writer.append_data(img)
@@ -121,7 +134,11 @@ def main(cfg_hydra: DictConfig) -> None:
         end = first_end if first_end is not None else len(frames) - 1
         idx = [int(round(x)) for x in torch.linspace(0, end, 4).tolist()]
         os.makedirs("output/paper/figures", exist_ok=True)
-        compose([frames[i] for i in idx], [f"t = {i / 30:.1f} s" for i in idx], f"output/paper/figures/filmstrip_{vid}.png")
+        def cap(i):
+            a, b = drill_log[i]
+            pretty = lambda x: x.replace("_", " ").replace("stand", "en garde").replace("lunge upper", "lunge").replace("lunge groin", "lunge low")
+            return f"t = {i / 30:.1f} s: " + (f"{pretty(a)} / {pretty(b)}" if b else pretty(a))
+        compose([frames[i] for i in idx], [cap(i) for i in idx], f"output/paper/figures/filmstrip_{vid}.png")
         print(f"[h2h] video output/paper/video/{vid}.mp4, first bout ends at step {first_end}")
         return
     b = max(bouts, 1)
